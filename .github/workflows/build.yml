@@ -1,0 +1,61 @@
+name: Build packages
+# Put the emu_save_manager folder at the root of a GitHub repo (this file stays at
+# .github/workflows/build.yml), push, then download the artifacts from the Actions tab.
+# Pushing a tag like v1.0.0 also attaches the files to a GitHub Release.
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install pyinstaller
+      - name: Freeze app
+        run: >
+          pyinstaller --noconfirm --clean --windowed --name EmuSaveManager
+          --hidden-import ps2mc --hidden-import cloudsync
+          --hidden-import ui_ps2cards --hidden-import ui_cloud
+          emu_save_manager.py
+      - name: Build installer
+        run: |
+          choco install innosetup -y --no-progress
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" packaging\installer.iss
+      - name: Portable zip
+        run: Compress-Archive -Path dist\EmuSaveManager -DestinationPath dist\EmuSaveManager-windows-portable.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            dist/EmuSaveManager-Setup.exe
+            dist/EmuSaveManager-windows-portable.zip
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            dist/EmuSaveManager-Setup.exe
+            dist/EmuSaveManager-windows-portable.zip
+
+  linux:
+    # Built on an older Ubuntu so the binary also runs on SteamOS (newer glibc).
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: System Python with Tk
+        run: sudo apt-get update && sudo apt-get install -y python3-tk python3-venv
+      - run: bash build_linux.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-steamdeck
+          path: dist/EmuSaveManager-linux-x86_64.tar.gz
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: dist/EmuSaveManager-linux-x86_64.tar.gz
