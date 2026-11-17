@@ -25,9 +25,18 @@ Tip: use PCSX2 *folder* memory cards (Settings > Memory Cards > Convert) so each
 file; whole-card `.ps2` files can't be merged if two devices change the same card between syncs.
 
 ## PS2 Card Manager
-Browse saves on a `.ps2` card, import/export `.psu`, copy between cards, delete, create a blank 8 MB card.
-Close PCSX2 first. A safety copy of the card is made before every change
-(`<backup folder>/_ps2_card_safety/`, newest 10 kept).
+Two cards side by side (left and right), each with its saves, free space and a usage bar.
+- **Copy / Move** saves between the cards with the arrow buttons, or drag them across
+  (drag = copy, hold **Shift** while dropping = move). Multi-select with Ctrl/Shift-click or Ctrl+A.
+  Moves are copied and verified on the target card (re-read from disk) before they are removed
+  from the source, so an interrupted move never loses a save.
+- **Card files**: create a blank formatted 8 MB card, duplicate, rename, delete.
+- Import / export `.psu`, delete saves, double-click a save for its file list. These act on the
+  highlighted side (the one you last clicked).
+- Name clashes ask once per operation: replace, skip, or cancel.
+
+Close PCSX2 first. A safety copy of every card that is written to is made before each change
+(`<backup folder>/_ps2_card_safety/`, newest 10 per card kept).
 
 ## Building installable packages (no Python needed on the target)
 PyInstaller can't cross-compile, so each OS is built on that OS:

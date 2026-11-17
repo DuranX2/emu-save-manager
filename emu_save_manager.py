@@ -5,7 +5,8 @@ Emulator Save Manager
 A cross-platform GUI (tkinter, standard library only) to back up and restore
 save data for PCSX2, Xemu, DuckStation and RetroArch, plus custom emulators.
 
-  * PS2 Card Manager : browse / import / export (.psu) / delete saves on PCSX2 cards
+  * PS2 Card Manager : two cards side by side - copy / move saves between them,
+                      create cards, import / export (.psu), delete
   * Cloud Sync       : sync with OneDrive via rclone, using EmuDeck's folder layout
                        so a PC and a Steam Deck share the same saves
 

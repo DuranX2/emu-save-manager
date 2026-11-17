@@ -566,6 +566,9 @@ class PS2Card:
             struct.pack_into("<I", first, 4, root_len + 1)
             self._write_rel(0, bytes(first))
 
+    def save_names(self) -> List[str]:
+        return [s.dirname for s in self.list_saves()]
+
     # ---- saving ----------------------------------------------------------------------
     def to_bytes(self) -> bytes:
         self._flush_fat()
@@ -588,3 +591,53 @@ class PS2Card:
             except OSError:
                 pass
             raise
+
+
+# ---------------------------------------------------------------------------
+# Copying / moving saves between cards
+# ---------------------------------------------------------------------------
+def save_signature(save: PSUSave):
+    """What must be identical for two copies of a save to count as the same."""
+    return sorted((f.name, f.data) for f in save.files)
+
+
+def verify_saves(card: PS2Card, saves: List[PSUSave]):
+    """Raise CardError unless every save in `saves` is on `card` with identical contents."""
+    for s in saves:
+        try:
+            copy = card.get_save(s.dirname)
+        except CardError:
+            raise CardError(f"Verification failed: '{s.dirname}' is missing on the target card")
+        if save_signature(copy) != save_signature(s):
+            raise CardError(f"Verification failed: '{s.dirname}' differs on the target card")
+
+
+def transfer_saves(src: PS2Card, dst: PS2Card, names, overwrite=(), move=False) -> List[PSUSave]:
+    """Copy (or move) the named saves from `src` to `dst`, in memory.
+
+    Names in `overwrite` replace a save of the same name on `dst`.  Saves are
+    verified on `dst` before anything is removed from `src`.  Nothing is written
+    to disk here: the caller saves `dst` first (and re-verifies it), then `src`.
+    On error both cards may be partly changed in memory and must be discarded.
+    """
+    overwrite = set(overwrite)
+    saves = [src.get_save(n) for n in names]
+    need = sum(s.size_kb() for s in saves)
+    freed = 0
+    existing = set(dst.save_names())
+    for s in saves:
+        if s.dirname in existing:
+            if s.dirname not in overwrite:
+                raise CardError(f"'{s.dirname}' already exists on the target card")
+            freed += dst.get_save(s.dirname).size_kb()
+    free = dst.free_clusters() + freed
+    if need > free:
+        raise CardError(f"Not enough space on the target card: the selected saves need "
+                        f"{need} KB, only {free} KB free")
+    for s in saves:
+        dst.import_save(s, overwrite=s.dirname in overwrite)
+    verify_saves(dst, saves)
+    if move:
+        for s in saves:
+            src.delete_save(s.dirname)
+    return saves
