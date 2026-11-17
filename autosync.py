@@ -190,7 +190,7 @@ def build_jobs(cfg: dict, profiles: dict, resolve):
             local = resolved.get(label)
             if enabled and local and Path(local).is_dir():
                 jobs.append({"emu": emu, "label": label, "local": Path(local),
-                             "sub": saved.get("sub") or cs.default_subpath(emu, label)})
+                             "sub": cs.effective_subpath(emu, label, saved.get("sub"))})
     return jobs
 
 
