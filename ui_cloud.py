@@ -170,14 +170,14 @@ class CloudSyncDialog(tk.Toplevel):
 
     def download_rclone(self):
         if not messagebox.askyesno("Download rclone", "Download the official rclone build for this system "
-                                   "from downloads.rclone.org and keep it in\n"
+                                   "(from downloads.rclone.org, or rclone's GitHub releases) and keep it in\n"
                                    f"{cs.OWN_RCLONE_DIR} ?", parent=self):
             return
         self._log_now("Downloading rclone…")
 
         def work():
             try:
-                path = cs.download_rclone()
+                path = cs.download_rclone(log=self._write)
                 self.q.put(("rclone", str(path)))
             except Exception as ex:  # noqa
                 self.q.put(("log", f"Download failed: {ex}"))

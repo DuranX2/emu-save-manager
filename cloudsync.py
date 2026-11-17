@@ -403,32 +403,51 @@ def bump_emudeck_hash(runner: RcloneRunner, remote: str, base: str, emu_dirs) ->
 # ---------------------------------------------------------------------------
 # Installing rclone / configuring a remote
 # ---------------------------------------------------------------------------
-def rclone_download_url() -> str:
+RCLONE_PINNED = "v1.69.0"          # the version EmuDeck installs; used as a last resort
+HTTP_HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; EmuSaveManager; +https://rclone.org)",
+                "Accept": "*/*"}
+
+
+def _platform_tag() -> str:
     machine = platform.machine().lower()
     arch = "arm64" if machine in ("arm64", "aarch64") else "amd64"
     osname = {"Windows": "windows", "Linux": "linux", "Darwin": "osx"}.get(platform.system())
     if not osname:
         raise OSError("Unsupported operating system")
-    return f"https://downloads.rclone.org/rclone-current-{osname}-{arch}.zip"
+    return f"{osname}-{arch}"
 
 
-def install_rclone_from_zip(zip_bytes: bytes, dest_dir: Path = OWN_RCLONE_DIR) -> Path:
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
-        member = next((n for n in z.namelist() if n == EXE or n.endswith("/" + EXE)), None)
-        if member is None:
-            raise OSError(f"{EXE} not found in the downloaded archive")
-        target = dest_dir / EXE
-        with z.open(member) as src, open(target, "wb") as dst:
-            shutil.copyfileobj(src, dst)
-    if not IS_WIN:
-        os.chmod(target, 0o755)
-    return target
+def rclone_download_url() -> str:
+    return f"https://downloads.rclone.org/rclone-current-{_platform_tag()}.zip"
 
 
-def download_rclone(progress=None, dest_dir: Path = OWN_RCLONE_DIR) -> Path:
-    """Download the official rclone build for this OS (https://downloads.rclone.org)."""
-    with urllib.request.urlopen(rclone_download_url(), timeout=60) as r:
+def _github_latest_url(tag: str, timeout=20) -> str:
+    req = urllib.request.Request("https://api.github.com/repos/rclone/rclone/releases/latest",
+                                 headers=dict(HTTP_HEADERS, Accept="application/vnd.github+json"))
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        data = json.loads(r.read().decode("utf-8", "replace"))
+    for a in data.get("assets", []):
+        name = a.get("name", "")
+        if name.endswith(f"-{tag}.zip"):
+            return a["browser_download_url"]
+    raise OSError("no matching file in the latest GitHub release")
+
+
+def rclone_download_candidates():
+    """(description, url or callable returning a url), tried in order."""
+    tag = _platform_tag()
+    return [
+        ("downloads.rclone.org", rclone_download_url()),
+        ("GitHub (latest release)", lambda: _github_latest_url(tag)),
+        (f"GitHub ({RCLONE_PINNED}, the version EmuDeck uses)",
+         f"https://github.com/rclone/rclone/releases/download/{RCLONE_PINNED}/"
+         f"rclone-{RCLONE_PINNED}-{tag}.zip"),
+    ]
+
+
+def _fetch(url: str, progress=None, timeout=60) -> bytes:
+    req = urllib.request.Request(url, headers=HTTP_HEADERS)
+    with urllib.request.urlopen(req, timeout=timeout) as r:
         total = int(r.headers.get("Content-Length") or 0)
         buf = bytearray()
         while True:
@@ -438,7 +457,47 @@ def download_rclone(progress=None, dest_dir: Path = OWN_RCLONE_DIR) -> Path:
             buf += chunk
             if progress and total:
                 progress(len(buf) / total)
-    return install_rclone_from_zip(bytes(buf), dest_dir)
+    return bytes(buf)
+
+
+def install_rclone_from_zip(zip_bytes: bytes, dest_dir: Path = OWN_RCLONE_DIR) -> Path:
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        z = zipfile.ZipFile(io.BytesIO(zip_bytes))
+    except zipfile.BadZipFile:
+        raise OSError("the download was not a zip file")
+    with z:
+        member = next((n for n in z.namelist() if n == EXE or n.endswith("/" + EXE)), None)
+        if member is None:
+            raise OSError(f"{EXE} not found in the downloaded archive")
+        target = dest_dir / EXE
+        tmp = dest_dir / (EXE + ".part")
+        with z.open(member) as src, open(tmp, "wb") as dst:
+            shutil.copyfileobj(src, dst)
+        os.replace(tmp, target)
+    if not IS_WIN:
+        os.chmod(target, 0o755)
+    return target
+
+
+def download_rclone(progress=None, dest_dir: Path = OWN_RCLONE_DIR, log=None, candidates=None) -> Path:
+    """Download the official rclone build for this OS, trying rclone's own download
+    server first and its GitHub releases after that."""
+    errors = []
+    for desc, url in (candidates or rclone_download_candidates()):
+        try:
+            if callable(url):
+                url = url()
+            if log:
+                log(f"Trying {desc}: {url}")
+            return install_rclone_from_zip(_fetch(url, progress), dest_dir)
+        except Exception as ex:  # noqa - any failure: try the next source
+            errors.append(f"{desc}: {ex}")
+            if log:
+                log(f"  failed: {ex}")
+    raise OSError("rclone could not be downloaded automatically.\n  " + "\n  ".join(errors)
+                  + "\nDownload it from https://rclone.org/downloads/ , unzip it, and use Browse… "
+                    "to pick rclone" + (".exe" if IS_WIN else "") + ".")
 
 
 def open_rclone_config_terminal(exe: str, conf: str) -> bool:
