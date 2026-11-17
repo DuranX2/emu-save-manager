@@ -68,6 +68,12 @@ def _no_window():
 
 def running_emulators():
     """Names of emulator processes that are running right now."""
+    return running_processes(EMULATOR_PREFIXES, WINDOWS_EXTRA)
+
+
+def running_processes(prefixes, windows_extra=()):
+    """Lower-case names of running processes that start with one of `prefixes`."""
+    prefixes, windows_extra = tuple(prefixes), tuple(windows_extra)
     names = []
     try:
         if IS_WIN:
@@ -75,7 +81,7 @@ def running_emulators():
                                  errors="replace", timeout=20, **_no_window()).stdout
             for line in out.splitlines():
                 name = line.split('","', 1)[0].strip('"').lower()
-                if name.startswith(EMULATOR_PREFIXES) or name in WINDOWS_EXTRA:
+                if name.startswith(prefixes) or name in windows_extra:
                     names.append(name)
         else:
             for d in Path("/proc").iterdir():
@@ -83,13 +89,13 @@ def running_emulators():
                     continue
                 try:
                     comm = (d / "comm").read_text(errors="replace").strip().lower()
-                    if comm.startswith(EMULATOR_PREFIXES):
+                    if comm.startswith(prefixes):
                         state = (d / "stat").read_text(errors="replace").rsplit(")", 1)[1].split()[0]
                         if state in ("Z", "X"):          # exited, not reaped yet
                             continue
                 except (OSError, IndexError):
                     continue
-                if comm.startswith(EMULATOR_PREFIXES):
+                if comm.startswith(prefixes):
                     names.append(comm)
     except (OSError, subprocess.SubprocessError):
         pass
@@ -302,10 +308,9 @@ def bios_vault_steps(cfg, resolve, log, dry=False, runner=None) -> int:
     return failed
 
 
-def main_cli(argv) -> int:
-    """Entry point for `EmuSaveManager --sync` (no window)."""
+def load_app():
+    """(cfg, profiles, resolve) from the saved settings, without the window."""
     import emu_save_manager as esm          # profiles and config live in the main module
-    log = Log(echo=(print if sys.stdout and sys.stdout.isatty() else None))
     cfg = esm.load_config()
     profiles = esm.builtin_profiles()
     profiles.update(cfg.get("custom", {}))
@@ -318,6 +323,13 @@ def main_cli(argv) -> int:
                 (Path(c) for c in loc["candidates"] if Path(c).is_dir()), None)
         return res
 
+    return cfg, profiles, resolve
+
+
+def main_cli(argv) -> int:
+    """Entry point for `EmuSaveManager --sync` (no window)."""
+    log = Log(echo=(print if sys.stdout and sys.stdout.isatty() else None))
+    cfg, profiles, resolve = load_app()
     mode = "both"
     for m in ("download", "upload"):
         if f"--{m}" in argv:
@@ -334,15 +346,15 @@ def main_cli(argv) -> int:
 # ---------------------------------------------------------------------------
 # Scheduling
 # ---------------------------------------------------------------------------
-def sync_command():
+def sync_command(flag="--sync"):
     """The command the scheduler runs: [program, args...]."""
     if getattr(sys, "frozen", False):
-        return [sys.executable, "--sync"]
+        return [sys.executable, flag]
     py = Path(sys.executable)
     if IS_WIN and py.name.lower() == "python.exe" and (py.parent / "pythonw.exe").is_file():
         py = py.parent / "pythonw.exe"           # no console window every few minutes
     script = Path(__file__).resolve().parent / "emu_save_manager.py"
-    return [str(py), str(script), "--sync"]
+    return [str(py), str(script), flag]
 
 
 def _systemd_dir() -> Path:

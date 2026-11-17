@@ -19,6 +19,7 @@ Keep all `.py` files in this folder together and run:
 | `ui_biosvault.py` | BIOS Vault window |
 | `tools/build_bios_db.py` | regenerates `biosdb_data.py` from libretro's System.dat |
 | `autosync.py` | background two-way sync (`--sync`) and its Windows / systemd scheduling - no GUI |
+| `exitwatch.py` | sync after an emulator or ES-DE closes (`--watch`) and starting it at sign-in - no GUI |
 
 ## PC <-> Steam Deck: two-way sync through OneDrive (or EmuDeck Cloud)
 Install the app on both (Windows: `EmuSaveManager-Setup.exe`; Steam Deck: see *Building* below), then on
@@ -31,6 +32,11 @@ Install the app on both (Windows: `EmuSaveManager-Setup.exe`; Steam Deck: see *B
 4. Tick **Automatic sync** (every 5-120 min). It keeps running while the app is closed:
    a Task Scheduler task on Windows, a systemd user timer on the Steam Deck (Desktop and Game Mode,
    catches up after sleep). Log: `~/.emu_save_manager/logs/autosync.log`.
+5. Optionally tick **Also sync right after an emulator closes** and/or **EmulationStation (ES-DE) closes**.
+   A small watcher (`EmuSaveManager --watch`) then runs from sign-in - a per-user Run entry on Windows,
+   a systemd user service on the Steam Deck - and syncs about 15 seconds after the program closes
+   (waiting for any other emulator to close first). On the Deck, "ES-DE closes" means quitting
+   EmulationStation in Game Mode; on the PC, "an emulator closes" covers emulators started any way.
 
 How conflicts are handled: newest file wins, nothing is ever deleted. Files a download replaces go to
 `<backup folder>/cloud_overwritten/`; files an upload replaces go to `<base parent>/EmuSaveManager-overwritten/`

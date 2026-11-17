@@ -10,8 +10,9 @@ DESKTOP="$APPS/emu-save-manager.desktop"
 
 if [ "${1:-}" = "--remove" ]; then
   # stop the automatic sync timer, if it was switched on
-  systemctl --user disable --now emu-save-manager-sync.timer >/dev/null 2>&1 || true
-  rm -f "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/emu-save-manager-sync."{timer,service}
+  systemctl --user disable --now emu-save-manager-sync.timer emu-save-manager-watch.service >/dev/null 2>&1 || true
+  rm -f "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/emu-save-manager-sync."{timer,service} \
+        "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/emu-save-manager-watch.service"
   systemctl --user daemon-reload >/dev/null 2>&1 || true
   rm -rf "$DEST" "$DESKTOP" "$HOME/.local/bin/emu-save-manager"
   command -v update-desktop-database >/dev/null && update-desktop-database "$APPS" || true

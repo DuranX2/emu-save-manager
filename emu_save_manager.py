@@ -15,6 +15,7 @@ save data for PCSX2, Xemu, DuckStation and RetroArch, plus custom emulators.
 
 Run:  python emu_save_manager.py          (Python 3.8+; keep the other .py files beside it)
       python emu_save_manager.py --sync   one two-way sync without the window
+      python emu_save_manager.py --watch  sync after an emulator / ES-DE closes (started by the app)
 """
 
 import copy
@@ -900,6 +901,9 @@ if __name__ == "__main__":
     if "--sync" in sys.argv:            # background two-way cloud sync, no window
         import autosync
         sys.exit(autosync.main_cli(sys.argv))
+    if "--watch" in sys.argv:           # sync after an emulator / ES-DE closes, no window
+        import exitwatch
+        sys.exit(exitwatch.watch())
     if "--bios-scan" in sys.argv:       # identify BIOS files in a folder, change nothing
         import biosvault
         folder = sys.argv[sys.argv.index("--bios-scan") + 1:] or ["."]

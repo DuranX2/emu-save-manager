@@ -8,6 +8,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
 import autosync
+import exitwatch
 import cloudsync as cs
 
 
@@ -107,16 +108,28 @@ class CloudSyncDialog(tk.Toplevel):
         auto = ttk.LabelFrame(self, text="Automatic sync (runs in the background, even when this app is closed)",
                               padding=8)
         auto.pack(fill="x", padx=10, pady=(8, 0))
+        r1 = ttk.Frame(auto)
+        r1.pack(fill="x")
         self.v_auto = tk.BooleanVar(value=False)
         self.v_interval = tk.StringVar(value=str(self.cfg.get("auto_minutes", 15)))
-        ttk.Checkbutton(auto, text="Sync both ways every", variable=self.v_auto,
+        ttk.Checkbutton(r1, text="Sync both ways every", variable=self.v_auto,
                         command=self.toggle_auto).pack(side="left")
-        iv = ttk.Combobox(auto, textvariable=self.v_interval, width=5, state="readonly",
+        iv = ttk.Combobox(r1, textvariable=self.v_interval, width=5, state="readonly",
                           values=[str(m) for m in autosync.INTERVALS])
         iv.pack(side="left", padx=4)
         iv.bind("<<ComboboxSelected>>", lambda e: self.toggle_auto(changed_interval=True))
-        ttk.Label(auto, text="minutes").pack(side="left")
-        ttk.Button(auto, text="Open sync log", command=self.open_log).pack(side="right")
+        ttk.Label(r1, text="minutes").pack(side="left")
+        ttk.Button(r1, text="Open sync log", command=self.open_log).pack(side="right")
+        r2 = ttk.Frame(auto)
+        r2.pack(fill="x", pady=(6, 0))
+        ex = self.cfg.get("exit_sync") or {}
+        self.v_exit_emu = tk.BooleanVar(value=bool(ex.get("emulators")))
+        self.v_exit_fe = tk.BooleanVar(value=bool(ex.get("frontend")))
+        ttk.Label(r2, text="Also sync right after").pack(side="left")
+        ttk.Checkbutton(r2, text="an emulator closes", variable=self.v_exit_emu,
+                        command=self.toggle_exit).pack(side="left", padx=(6, 0))
+        ttk.Checkbutton(r2, text="EmulationStation (ES-DE) closes", variable=self.v_exit_fe,
+                        command=self.toggle_exit).pack(side="left", padx=(10, 0))
         self.auto_status = ttk.Label(self, text="", foreground="#1f5fa8", padding=(12, 2))
         self.auto_status.pack(anchor="w")
         ttk.Label(self, text="Skipped automatically while PCSX2, DuckStation, RetroArch, Dolphin or xemu is "
@@ -325,6 +338,11 @@ class CloudSyncDialog(tk.Toplevel):
         if last:
             when = last.get("time", "").replace("T", " ")
             tail = f"  ·  last sync {when}: {last.get('message') or last.get('result', '')}"
+        ex = self.cfg.get("exit_sync") or {}
+        if ex.get("emulators") or ex.get("frontend"):
+            what = " / ".join(t for t, k in (("emulator", "emulators"), ("ES-DE", "frontend")) if ex.get(k))
+            state = exitwatch.watch_status() or "starting"
+            desc += f"  ·  after {what} closes: {state}"
         self.auto_status.config(text=f"Automatic sync: {desc}{tail}")
 
     def toggle_auto(self, changed_interval=False):
@@ -354,6 +372,30 @@ class CloudSyncDialog(tk.Toplevel):
                 messagebox.showerror("Automatic sync", str(ex), parent=self)
             self._log_now("Automatic sync is off.")
         self._refresh_auto()
+
+    def toggle_exit(self):
+        opts = {"emulators": self.v_exit_emu.get(), "frontend": self.v_exit_fe.get()}
+        old = dict(self.cfg.get("exit_sync") or {})
+        if any(opts.values()) and not self._ready():
+            self.v_exit_emu.set(bool(old.get("emulators")))
+            self.v_exit_fe.set(bool(old.get("frontend")))
+            return
+        self.cfg["exit_sync"] = opts
+        self._save()                          # the watcher reads these settings while it runs
+        try:
+            if any(opts.values()):
+                desc = exitwatch.enable_watch()
+                self._log_now(f"Sync-on-exit is on ({desc}). Log: {autosync.LOG_FILE}")
+            else:
+                exitwatch.disable_watch()
+                self._log_now("Sync-on-exit is off.")
+        except OSError as ex:
+            self.cfg["exit_sync"] = old
+            self._save()
+            self.v_exit_emu.set(bool(old.get("emulators")))
+            self.v_exit_fe.set(bool(old.get("frontend")))
+            messagebox.showerror("Sync on exit", str(ex), parent=self)
+        self.after(1500, self._refresh_auto)
 
     def open_log(self):
         autosync.LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
