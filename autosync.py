@@ -255,20 +255,42 @@ def sync_from_config(cfg: dict, profiles: dict, resolve, log, mode="both", dry=F
         return 3
     try:
         jobs = build_jobs(cfg, profiles, resolve)
-        if not jobs:
-            log("Nothing to sync: no enabled folder exists on this device.")
-            write_status(result="nothing", message="no enabled folders on this device")
-            return 0
         runner = cs.RcloneRunner(exe, conf, log)
-        log(f"Sync ({mode}{', preview' if dry else ''}) on {device_name()} with {remote}:{base}")
-        ok, failed = run_jobs(runner, jobs, remote, base, mode, dry,
-                              Path(cfg.get("backup_dir") or APP_DIR / "backups"), log)
+        ok = failed = 0
+        if jobs:
+            log(f"Sync ({mode}{', preview' if dry else ''}) on {device_name()} with {remote}:{base}")
+            ok, failed = run_jobs(runner, jobs, remote, base, mode, dry,
+                                  Path(cfg.get("backup_dir") or APP_DIR / "backups"), log)
+        else:
+            log("No enabled save folder exists on this device.")
+        failed += bios_vault_steps(cfg, resolve, log, dry, runner)
         log(f"Finished: {ok} step(s) OK, {failed} failed.")
         write_status(result="ok" if not failed else "failed", ok=ok, failed=failed,
                      message=f"{ok} step(s) OK, {failed} failed" + (" (preview)" if dry else ""))
         return 0 if not failed else 1
     finally:
         lock.release()
+
+
+def bios_vault_steps(cfg, resolve, log, dry=False, runner=None) -> int:
+    """The BIOS Vault part of a sync, when switched on in the BIOS Vault window.
+    Returns the number of failed steps."""
+    bv = cfg.get("bios_vault", {})
+    if dry or not (bv.get("sync") or bv.get("auto_install")):
+        return 0
+    import biostargets
+    import biosvault
+    failed = 0
+    if bv.get("sync"):
+        log("== BIOS Vault ==")
+        if not biosvault.sync_cloud(cfg, log, runner=runner):
+            failed += 1
+    if bv.get("auto_install"):
+        entries = biosvault.scan(biosvault.vault_dir(cfg))
+        if entries:
+            res = biostargets.install_all(entries, resolve, log)
+            failed += res["failed"]
+    return failed
 
 
 def main_cli(argv) -> int:

@@ -14,6 +14,10 @@ Keep all `.py` files in this folder together and run:
 | `ui_ps2cards.py` | PS2 Card Manager window |
 | `cloudsync.py` | rclone wrapper using EmuDeck's folder layout, incl. EmuDeck Cloud - no GUI |
 | `ui_cloud.py` | Cloud Sync window |
+| `biosdb.py`, `biosdb_data.py` | identify BIOS files by content (PS2 version record, libretro fingerprints) - no GUI |
+| `biosvault.py`, `biostargets.py` | BIOS Vault: store, cloud sync, find emulator BIOS folders, install - no GUI |
+| `ui_biosvault.py` | BIOS Vault window |
+| `tools/build_bios_db.py` | regenerates `biosdb_data.py` from libretro's System.dat |
 | `autosync.py` | background two-way sync (`--sync`) and its Windows / systemd scheduling - no GUI |
 
 ## PC <-> Steam Deck: two-way sync through OneDrive (or EmuDeck Cloud)
@@ -43,6 +47,35 @@ On the Steam Deck the app finds EmuDeck's `Emulation/saves/<emulator>/...` folde
 **EmuDeck Cloud** works too: **Set up EmuDeck Cloud...** uses the EmuDeck app's Patreon sign-in on that
 computer, picks Backblaze (`Emudeck-cloud`) or Wasabi (`Emudeck-cloud2`) and the `cs<id>/Emudeck/saves`
 folder, and writes a new `.hash` after uploads so EmuDeck's own CloudSync notices the change.
+
+## BIOS Vault
+Your own BIOS files, identified by their contents, kept in one place, synced between devices
+and installed into every emulator. The app never downloads BIOS files from anywhere except
+your own cloud drive; dump them from consoles you own.
+
+- **Add files / Add folder**: files, folders and zip archives. Each file is identified by content:
+  PS2 by reading the BIOS's own version record (as PCSX2 does: region, version, date, truncated
+  dumps), everything else by libretro's fingerprint list (also gives the file names RetroArch cores
+  expect), Xbox MCPX by the hashes in xemu's documentation. A folder laid out by system
+  (`Sony - PlayStation 2/...`) keeps its layout; folder sets such as `Sega - Dreamcast/dc/` or
+  blueMSX's `Machines/` are kept exactly as they are.
+- **Vault layout**: `~/.emu_save_manager/bios_vault/<System>/<file>`; the folder is the system, so
+  "Move to system..." is all it takes to place an unknown file.
+- **This device**: finds each emulator's BIOS folder - PCSX2 (`[Folders] Bios` in PCSX2.ini),
+  DuckStation, RetroArch (`system_directory`), xemu (the paths in xemu.toml), Dolphin
+  (`GC/<USA|EUR|JAP>/IPL.bin`) and EmuDeck's `Emulation/bios` - and shows what is in place.
+  **Install** copies what is missing; nothing that is already there is replaced (a different file
+  with the same name is reported as a conflict). Unknown and damaged files are never installed.
+  **Remove what the app installed** moves only its own copies to the backup folder.
+- **Cloud**: "Sync vault with cloud" copies the vault both ways with `Emulator BIOS Vault` at the
+  top of your cloud drive (newest wins, nothing deleted). Tick the two boxes to include the vault in
+  automatic sync and to install new files automatically - a new Steam Deck then gets everything on
+  its next sync.
+- Command line: `EmuSaveManager --bios-scan <folder>` lists what every file is (changes nothing).
+
+Fingerprints: `biosdb_data.py` is generated from libretro's
+[System.dat](https://github.com/libretro/libretro-database) (CC BY-SA 4.0) and shared under the
+same licence; it contains hashes and names only.
 
 ## PS2 Card Manager
 Two cards side by side (left and right). Each side can be a card **file** (`Mcd001.ps2`) or a PCSX2
