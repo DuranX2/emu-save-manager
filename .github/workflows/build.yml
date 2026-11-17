@@ -1,11 +1,13 @@
 name: Build packages
 # Put the emu_save_manager folder at the root of a GitHub repo (this file stays at
 # .github/workflows/build.yml), push, then download the artifacts from the Actions tab.
-# Pushing a tag like v1.0.0 also attaches the files to a GitHub Release.
+# Publishing a GitHub Release (or pushing a tag like v1.0.0) also attaches the files to it.
 on:
   workflow_dispatch:
   push:
     tags: ["v*"]
+  release:
+    types: [published]
 
 permissions:
   contents: write
