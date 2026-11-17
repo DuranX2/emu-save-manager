@@ -630,7 +630,7 @@ def transfer_saves(src: PS2Card, dst: PS2Card, names, overwrite=(), move=False) 
             if s.dirname not in overwrite:
                 raise CardError(f"'{s.dirname}' already exists on the target card")
             freed += dst.get_save(s.dirname).size_kb()
-    free = dst.free_clusters() + freed
+    free = dst.free_clusters() + freed if getattr(dst, "limited", True) else need
     if need > free:
         raise CardError(f"Not enough space on the target card: the selected saves need "
                         f"{need} KB, only {free} KB free")

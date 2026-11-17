@@ -1,8 +1,10 @@
-"""ui_ps2cards.py - two-pane manager for PCSX2 memory card images.
+"""ui_ps2cards.py - two-pane manager for PCSX2 memory cards.
 
-Two cards are shown side by side.  Saves can be copied or moved between them
-with the arrow buttons or by dragging (hold Shift while dropping to move).
-Every change is preceded by a safety copy of each card that is written to.
+Two cards are shown side by side - card files (.ps2) or PCSX2 folder memory
+cards, in any combination.  Saves can be copied or moved between them with the
+arrow buttons or by dragging (hold Shift while dropping to move).
+Before a card file is changed a safety copy of it is made; on folder cards the
+save folders that are replaced or removed are moved to the backup folder.
 """
 
 import os
@@ -14,6 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
+from ps2folder import create_folder_card, is_folder_card, open_card
 from ps2mc import CardError, PS2Card, build_psu, parse_psu, transfer_saves, verify_saves
 
 CARD_EXTS = {".ps2", ".bin", ".mc2"}
@@ -51,7 +54,12 @@ class CardPane(ttk.LabelFrame):
         self.combo = ttk.Combobox(row, state="readonly")
         self.combo.pack(side="left", fill="x", expand=True)
         self.combo.bind("<<ComboboxSelected>>", self.on_pick)
-        ttk.Button(row, text="Browse…", command=self.browse).pack(side="left", padx=(4, 0))
+        mb = ttk.Menubutton(row, text="Browse…")
+        menu = tk.Menu(mb, tearoff=False)
+        menu.add_command(label="Card file (.ps2)…", command=self.browse)
+        menu.add_command(label="Folder memory card…", command=self.browse_folder)
+        mb["menu"] = menu
+        mb.pack(side="left", padx=(4, 0))
 
         tf = ttk.Frame(self)
         tf.pack(fill="both", expand=True, pady=(6, 0))
@@ -69,7 +77,7 @@ class CardPane(ttk.LabelFrame):
 
         self.usage = ttk.Progressbar(self, maximum=1, value=0)
         self.usage.pack(fill="x", pady=(6, 2))
-        self.info = ttk.Label(self, text="")
+        self.info = ttk.Label(self, text="", wraplength=480, justify="left")
         self.info.pack(anchor="w")
 
         self.tree.bind("<FocusIn>", lambda e: dialog.set_active(self))
@@ -84,7 +92,7 @@ class CardPane(ttk.LabelFrame):
     def set_cards(self, found):
         """found: {display name: path} of cards in PCSX2's folder."""
         self.cards = dict(found)
-        if self.path and self.path.is_file() and not any(same_file(p, self.path) for p in found.values()):
+        if self.path and self.path.exists() and not any(same_file(p, self.path) for p in found.values()):
             self.cards[f"{self.path.name}  (other folder)"] = self.path
         names = list(self.cards)
         self.combo["values"] = names
@@ -109,6 +117,20 @@ class CardPane(ttk.LabelFrame):
             self.dialog.set_active(self)
             self.dialog.refresh_card_lists()
 
+    def browse_folder(self):
+        d = self.dialog.card_dir()
+        f = filedialog.askdirectory(parent=self.dialog, title="Choose a PCSX2 folder memory card",
+                                    initialdir=str(d) if d else str(Path.home()))
+        if not f:
+            return
+        if not is_folder_card(f):
+            messagebox.showerror("Folder memory card", f"{Path(f).name} is not a PCSX2 folder "
+                                 "memory card (it has no _pcsx2_superblock file).", parent=self.dialog)
+            return
+        self.path = Path(f)
+        self.dialog.set_active(self)
+        self.dialog.refresh_card_lists()
+
     # ---- contents ----------------------------------------------------------------
     def reload(self):
         keep = set(self.tree.selection())
@@ -121,9 +143,10 @@ class CardPane(ttk.LabelFrame):
             self.dialog.update_buttons()
             return
         try:
-            card = PS2Card.load(self.path)
+            card = open_card(self.path)
             saves = card.list_saves()
-            self.free_kb = card.free_clusters()
+            folder = getattr(card, "is_folder", False)
+            self.free_kb = 0 if folder else card.free_clusters()
         except ERRORS as ex:
             self.info.config(text=f"Cannot read {self.path.name}: {ex}")
             self.dialog.update_buttons()
@@ -143,10 +166,18 @@ class CardPane(ttk.LabelFrame):
         sel = [n for n in keep if n in self.rows]
         if sel:
             self.tree.selection_set(sel)
-        total = card.n_alloc
-        self.usage.configure(maximum=total, value=total - self.free_kb)
-        self.info.config(text=f"{len(saves)} save(s)  ·  {self.free_kb:,} KB free of {total:,} KB"
-                              f"{'' if card.has_ecc else '  ·  no ECC'}")
+        if folder:
+            self.usage.pack_forget()
+            used = sum(s.size_kb for s in saves)
+            self.info.config(text=f"Folder card  ·  {len(saves)} save(s)  ·  {used:,} KB  ·  PCSX2 "
+                                  "loads only the running game's saves, so the 8 MB limit is per game"
+                                  + ("" if card.formatted else "  ·  not formatted yet"))
+        else:
+            self.usage.pack(fill="x", pady=(6, 2), before=self.info)
+            total = card.n_alloc
+            self.usage.configure(maximum=total, value=total - self.free_kb)
+            self.info.config(text=f"{len(saves)} save(s)  ·  {self.free_kb:,} KB free of {total:,} KB"
+                                  f"{'' if card.has_ecc else '  ·  no ECC'}")
         self.dialog.update_buttons()
 
     def sort_by(self, col):
@@ -177,7 +208,7 @@ class CardPane(ttk.LabelFrame):
         if not name or not self.path:
             return
         try:
-            save = PS2Card.load(self.path).get_save(name)
+            save = open_card(self.path).get_save(name)
         except ERRORS as ex:
             messagebox.showerror("Save details", str(ex), parent=self.dialog)
             return
@@ -308,7 +339,8 @@ class PS2CardDialog(tk.Toplevel):
         top = ttk.Frame(self, padding=(10, 8, 10, 4))
         top.pack(fill="x")
         ttk.Label(top, text="Card files:").pack(side="left", padx=(0, 6))
-        for text, cmd in (("New 8 MB card…", self.new_card), ("Duplicate…", self.duplicate_card),
+        for text, cmd in (("New 8 MB card…", self.new_card), ("New folder card…", self.new_folder_card),
+                          ("Duplicate…", self.duplicate_card),
                           ("Rename…", self.rename_card), ("Delete card file…", self.delete_card)):
             ttk.Button(top, text=text, command=cmd).pack(side="left", padx=(0, 4))
         ttk.Button(top, text="Refresh", command=self.refresh_card_lists).pack(side="right")
@@ -385,8 +417,12 @@ class PS2CardDialog(tk.Toplevel):
         d = self.card_dir()
         if d and d.is_dir():
             for p in sorted(d.iterdir(), key=lambda p: p.name.lower()):
-                if p.is_file() and p.suffix.lower() in CARD_EXTS:
-                    found[f"{p.name}  ({p.stat().st_size / 1048576:.1f} MB)"] = p
+                if p.suffix.lower() not in CARD_EXTS:
+                    continue
+                if p.is_file():
+                    found[f"{p.name}  ({p.stat().st_size / 1048576:.1f} MB file)"] = p
+                elif is_folder_card(p):
+                    found[f"{p.name}  (folder)"] = p
         return found
 
     def refresh_card_lists(self, initial=False):
@@ -407,7 +443,30 @@ class PS2CardDialog(tk.Toplevel):
             p.reload()
 
     # ---- safe modification ----------------------------------------------------------------
+    def _trash_dir(self, path: Path) -> Path:
+        """Where save folders removed from a folder card go (one folder per change)."""
+        root = self.app.backup_dir / "_ps2_card_safety" / "folder_cards"
+        stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        t = root / f"{path.name}_{stamp}"
+        i = 2
+        while t.exists():
+            t = root / f"{path.name}_{stamp}_{i}"
+            i += 1
+        olds = sorted((p for p in root.glob(f"{path.name}_*") if p.is_dir()),
+                      key=lambda p: p.stat().st_mtime) if root.is_dir() else []
+        for old in olds[:-KEEP_SAFETY_COPIES + 1]:
+            shutil.rmtree(old, ignore_errors=True)
+        return t
+
+    def _write(self, card, path: Path):
+        if getattr(card, "is_folder", False):
+            card.save(trash_dir=self._trash_dir(path))
+        else:
+            card.save(path)
+
     def _safety_copy(self, path: Path):
+        if path.is_dir():
+            return              # folder cards: replaced/removed saves go to the trash folder
         d = self.app.backup_dir / "_ps2_card_safety"
         d.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -445,9 +504,9 @@ class PS2CardDialog(tk.Toplevel):
         self._busy(True)
         try:
             self._safety_copy(path)
-            card = PS2Card.load(path)
+            card = open_card(path)
             func(card)
-            card.save(path)
+            self._write(card, path)
             return True
         except ERRORS as ex:
             messagebox.showerror("Memory card", f"The card was not changed:\n\n{ex}", parent=self)
@@ -502,7 +561,7 @@ class PS2CardDialog(tk.Toplevel):
             return
         verb = "Move" if move else "Copy"
         try:
-            existing = set(PS2Card.load(dst.path).save_names())
+            existing = set(open_card(dst.path).save_names())
         except ERRORS as ex:
             messagebox.showerror(verb, f"Cannot read {dst.path.name}: {ex}", parent=self)
             return
@@ -524,8 +583,8 @@ class PS2CardDialog(tk.Toplevel):
         stage = "read"
         self._busy(True)
         try:
-            src_card = PS2Card.load(src.path)
-            dst_card = PS2Card.load(dst.path)
+            src_card = open_card(src.path)
+            dst_card = open_card(dst.path)
             stage = "backup"
             self._safety_copy(dst.path)
             if move:
@@ -533,18 +592,18 @@ class PS2CardDialog(tk.Toplevel):
             stage = "transfer"
             saves = transfer_saves(src_card, dst_card, chosen, overwrite, move)
             stage = "write-target"
-            dst_card.save(dst.path)
+            self._write(dst_card, dst.path)
             stage = "verify"
-            verify_saves(PS2Card.load(dst.path), saves)     # check what actually reached the disk
+            verify_saves(open_card(dst.path), saves)        # check what actually reached the disk
             if move:
                 stage = "write-source"
-                src_card.save(src.path)
+                self._write(src_card, src.path)
         except ERRORS as ex:
             if stage in ("read", "backup", "transfer"):
                 note = "Neither card was changed."
             elif stage in ("write-target", "verify"):
-                note = (f"{dst.path.name} may have been changed; its safety copy is in the "
-                        f"backup folder. {src.path.name} was not changed.")
+                note = (f"{dst.path.name} may have been changed (its safety copy or any replaced "
+                        f"saves are in the backup folder). {src.path.name} was not changed.")
             else:
                 note = (f"The saves were copied to {dst.path.name}, but could not be removed "
                         f"from {src.path.name}. Nothing was lost.")
@@ -574,7 +633,7 @@ class PS2CardDialog(tk.Toplevel):
         if not dest:
             return
         try:
-            card = PS2Card.load(pane.path)
+            card = open_card(pane.path)
             done = []
             for n in names:
                 target = Path(dest) / f"{n}.psu"
@@ -605,7 +664,7 @@ class PS2CardDialog(tk.Toplevel):
                 messagebox.showerror("Import", f"{Path(f).name}: {ex}", parent=self)
                 return
         try:
-            existing = set(PS2Card.load(pane.path).save_names())
+            existing = set(open_card(pane.path).save_names())
         except ERRORS as ex:
             messagebox.showerror("Import", str(ex), parent=self)
             return
@@ -635,7 +694,7 @@ class PS2CardDialog(tk.Toplevel):
             return
         shown = "\n  ".join(names[:15]) + ("\n  …" if len(names) > 15 else "")
         if not messagebox.askyesno("Delete saves", f"Permanently delete from {pane.path.name}:\n\n  "
-                                   + shown + "\n\nA safety copy of the card is kept.", parent=self):
+                                   + shown + "\n\n" + self._kept_note(pane.path), parent=self):
             return
 
         def work(card):
@@ -645,6 +704,11 @@ class PS2CardDialog(tk.Toplevel):
         if self._modify(pane.path, work):
             self.status(f"Deleted {len(names)} save(s) from {pane.path.name}")
         self.reload_all()
+
+    @staticmethod
+    def _kept_note(path: Path):
+        return ("The removed save folders are kept in the backup folder." if path.is_dir()
+                else "A safety copy of the card is kept.")
 
     # ---- card file operations --------------------------------------------------------------------
     def _next_card_name(self, folder: Path):
@@ -668,7 +732,7 @@ class PS2CardDialog(tk.Toplevel):
         name = name.strip()
         if not Path(name).suffix:
             name += ".ps2"
-        if os.sep in name or "/" in name or name.startswith("."):
+        if os.sep in name or "/" in name or name.startswith(".") or name.startswith("_pcsx2_"):
             messagebox.showerror("Memory card", "Please enter a plain file name.", parent=self)
             return None
         target = d / name
@@ -692,6 +756,21 @@ class PS2CardDialog(tk.Toplevel):
         self.status(f"Created {target.name} (8 MB, formatted, empty). "
                     "Assign it to a slot in PCSX2 under Settings > Memory Cards.")
 
+    def new_folder_card(self):
+        target = self._ask_new_path(f"Name for the new folder memory card (opens on the "
+                                    f"{self.active.label.lower()}):")
+        if not target:
+            return
+        try:
+            create_folder_card(target)
+        except (CardError, OSError) as ex:
+            messagebox.showerror("New folder card", str(ex), parent=self)
+            return
+        self.active.path = target
+        self.refresh_card_lists()
+        self.status(f"Created folder card {target.name} (formatted, empty). "
+                    "In PCSX2 pick it under Settings > Memory Cards.")
+
     def duplicate_card(self):
         pane = self.active
         if not self._need_card(pane):
@@ -700,7 +779,11 @@ class PS2CardDialog(tk.Toplevel):
         if not target:
             return
         try:
-            shutil.copy2(pane.path, target)
+            if pane.path.is_dir():
+                shutil.copytree(pane.path, target,
+                                ignore=shutil.ignore_patterns("_pcsx2_deleted_*", "_pcsx2_tmp_*"))
+            else:
+                shutil.copy2(pane.path, target)
         except OSError as ex:
             messagebox.showerror("Duplicate", str(ex), parent=self)
             return
@@ -733,12 +816,19 @@ class PS2CardDialog(tk.Toplevel):
         if not self._need_card(pane) or not self._confirm_closed():
             return
         path = pane.path
-        if not messagebox.askyesno("Delete card file", f"Delete {path.name} and ALL saves on it?\n"
-                                   "A safety copy is kept in the backup folder.", parent=self):
+        kind = "folder card" if path.is_dir() else "card file"
+        if not messagebox.askyesno(f"Delete {kind}", f"Delete {path.name} and ALL saves on it?\n"
+                                   f"The {kind} is moved to the backup folder, not erased.", parent=self):
             return
         try:
-            self._safety_copy(path)
-            path.unlink()
+            if path.is_dir():
+                stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+                dest = self.app.backup_dir / "_ps2_card_safety" / "deleted_cards" / f"{path.name}_{stamp}"
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(path), str(dest))
+            else:
+                self._safety_copy(path)
+                path.unlink()
         except OSError as ex:
             messagebox.showerror("Delete", str(ex), parent=self)
             return
@@ -746,7 +836,7 @@ class PS2CardDialog(tk.Toplevel):
             if p.path == path:
                 p.path = None
         self.refresh_card_lists()
-        self.status(f"Deleted {path.name} (safety copy kept)")
+        self.status(f"Deleted {path.name} (kept in the backup folder)")
 
     def open_folder(self):
         d = self.card_dir()
