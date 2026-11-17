@@ -56,9 +56,22 @@ EMUDECK_SUBPATHS = {
     ("RetroArch", "States"): "retroarch/states",
     ("Dolphin", "GameCube Saves"): "dolphin/GC",
     ("Dolphin", "Wii Saves"): "dolphin/Wii",
-    ("Dolphin", "Save States"): "dolphin/StateSaves",
+    ("Dolphin", "Save States"): "dolphin/states",
     ("Xemu", "HDD and EEPROM"): "xemu",
 }
+# Cloud folders earlier versions used by mistake; a saved setting equal to one of these
+# means "the default" (1.0.0 used dolphin/StateSaves, but EmuDeck keeps dolphin/states).
+LEGACY_SUBPATHS = {
+    ("Dolphin", "Save States"): ("dolphin/StateSaves",),
+}
+
+
+def effective_subpath(emu: str, label: str, saved: str = "") -> str:
+    """The cloud sub folder for a row: the user's own choice, else EmuDeck's layout."""
+    saved = (saved or "").strip("/ ")
+    if not saved or saved in LEGACY_SUBPATHS.get((emu, label), ()):
+        return default_subpath(emu, label)
+    return saved
 # Huge files: off by default so a first sync doesn't upload gigabytes.
 DISABLED_BY_DEFAULT = {("Xemu", "HDD and EEPROM")}
 

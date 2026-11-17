@@ -350,7 +350,7 @@ class CloudSyncDialog(tk.Toplevel):
                 local = resolved.get(label)
                 self.pairs[key] = {
                     "emu": emu, "label": label, "local": local,
-                    "sub": saved.get("sub") or cs.default_subpath(emu, label),
+                    "sub": cs.effective_subpath(emu, label, saved.get("sub")),
                     "enabled": saved.get("enabled", (emu, label) not in cs.DISABLED_BY_DEFAULT),
                 }
                 self.tree.insert("", "end", iid=key)
