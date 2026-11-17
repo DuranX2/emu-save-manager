@@ -242,6 +242,15 @@ def sync_from_config(cfg: dict, profiles: dict, resolve, log, mode="both", dry=F
         log("Cloud Sync is not set up yet (open Cloud Sync in the app first).")
         write_status(result="not-set-up", message="Cloud Sync is not set up")
         return 2
+    if not cs.emudeck_cloud_base_ok(remote, base):
+        user = cs.discover_emudeck_cloud_user(cs.RcloneRunner(exe, conf, lambda s: None), remote)
+        if not user:
+            log(f"Skipped: {remote} is EmuDeck Cloud, but the cloud folder '{base}' is not your EmuDeck "
+                "Cloud folder. Open Cloud Sync and pick your OneDrive remote, or use 'Set up EmuDeck Cloud…'.")
+            write_status(result="failed", message="EmuDeck Cloud folder not set - open Cloud Sync")
+            return 1
+        base = cs.emudeck_cloud_base(remote, user)
+        log(f"Using your EmuDeck Cloud folder {base}.")
     if respect_emulators:
         emus = running_emulators()
         if emus:

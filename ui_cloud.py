@@ -163,14 +163,21 @@ class CloudSyncDialog(tk.Toplevel):
                           "or 'Set up OneDrive…'.")
 
     def _reload_remotes(self):
-        remotes = cs.list_remotes(self.v_conf.get())
+        info = cs.remote_info(self.v_conf.get())
+        remotes = [(n, t) for n, t, _ok in info]
         self._remote_types = dict(remotes)
-        usable = [(n, t) for n, t in remotes
-                  if cs.is_emudeck_cloud(n) or t not in ("", "alias", "crypt", "union", "combine")]
-        names = [n for n, _t in usable]
+        current = self.v_remote.get()
+        # signed-in remotes only (EmuDeck's rclone.conf has an empty template for every
+        # provider); the current choice stays listed so it can be seen and changed
+        usable = [(n, t, ok) for n, t, ok in info
+                  if (ok or n == current) and (cs.is_emudeck_cloud(n) or t not in ("", "crypt", "union", "combine"))]
+        self._remote_ready = {n: ok for n, _t, ok in info}
+        names = [n for n, _t, _ok in usable]
         self.combo["values"] = names
-        if self.v_remote.get() not in names:
-            self.v_remote.set(cs.pick_default_remote(usable))
+        if self.v_remote.get() not in names or not self._remote_ready.get(self.v_remote.get(), True):
+            best = cs.pick_default_remote(usable)
+            if best or self.v_remote.get() not in names:
+                self.v_remote.set(best)
         self._on_remote(save=False)
 
     def _on_remote(self, save=True):
@@ -183,6 +190,8 @@ class CloudSyncDialog(tk.Toplevel):
             self.remote_kind.config(text=cs.EMUDECK_CLOUD_VARIANTS[remote]["label"])
             if user:
                 self.v_base.set(cs.emudeck_cloud_base(remote, user))
+            elif not cs.emudeck_cloud_base_ok(remote, base) and self.v_rclone.get():
+                self._find_emudeck_folder(remote)
         else:
             kind = getattr(self, "_remote_types", {}).get(remote, "")
             self.remote_kind.config(text={"onedrive": "OneDrive"}.get(kind, kind))
@@ -225,6 +234,21 @@ class CloudSyncDialog(tk.Toplevel):
         if not cs.open_rclone_config_terminal(exe, self.v_conf.get()):
             messagebox.showinfo("rclone", "Could not open a terminal. Run this yourself:\n\n"
                                 f"{exe} config --config \"{self.v_conf.get()}\"", parent=self)
+
+    def _find_emudeck_folder(self, remote):
+        """EmuDeck Cloud picked without 'Set up EmuDeck Cloud…': find the account folder."""
+        runner = cs.RcloneRunner(self.v_rclone.get(), self.v_conf.get(), self._write)
+        self._write(f"Finding your EmuDeck Cloud folder for {remote}…")
+
+        def work():
+            user = cs.discover_emudeck_cloud_user(runner, remote)
+            if user:
+                self.q.put(("emudeck", self.v_conf.get(), user, remote))
+            else:
+                self._write("Could not work out the EmuDeck Cloud folder. Use 'Set up EmuDeck Cloud…', "
+                            "or pick your OneDrive remote.")
+
+        self._launch(runner, work)
 
     def setup_emudeck_cloud(self):
         exe = self.v_rclone.get()
