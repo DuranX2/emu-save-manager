@@ -11,7 +11,7 @@ python3 -m venv .buildenv
 pip install --upgrade pip pyinstaller
 
 pyinstaller --noconfirm --clean --windowed --name EmuSaveManager \
-  --hidden-import ps2mc --hidden-import ps2folder --hidden-import cloudsync --hidden-import autosync --hidden-import biosdb --hidden-import biosdb_data --hidden-import biosvault --hidden-import biostargets --hidden-import ui_biosvault \
+  --hidden-import ps2mc --hidden-import ps2folder --hidden-import cloudsync --hidden-import autosync --hidden-import exitwatch --hidden-import biosdb --hidden-import biosdb_data --hidden-import biosvault --hidden-import biostargets --hidden-import ui_biosvault \
   --hidden-import ui_ps2cards --hidden-import ui_cloud \
   emu_save_manager.py
 
