@@ -14,26 +14,35 @@ Keep all `.py` files in this folder together and run:
 | `ui_ps2cards.py` | PS2 Card Manager window |
 | `cloudsync.py` | rclone wrapper using EmuDeck's folder layout, incl. EmuDeck Cloud - no GUI |
 | `ui_cloud.py` | Cloud Sync window |
+| `autosync.py` | background two-way sync (`--sync`) and its Windows / systemd scheduling - no GUI |
 
-## PC <-> Steam Deck: EmuDeck Cloud or OneDrive
-Cloud layout is the same as EmuDeck CloudSync: `<remote>:<base>/<emulator>/{saves,states}`.
+## PC <-> Steam Deck: two-way sync through OneDrive (or EmuDeck Cloud)
+Install the app on both (Windows: `EmuSaveManager-Setup.exe`; Steam Deck: see *Building* below), then on
+**each** device open **Cloud Sync...**:
+1. **Download rclone**, then **Set up OneDrive...** (a terminal opens `rclone config`; sign in in the browser).
+2. Pick the OneDrive remote and use the **same base folder on both devices** (default `EmuDeck/saves`;
+   any name works, e.g. `Emulator Saves`). Each emulator folder goes to `<base>/<emulator>/{saves,states}`,
+   so the cloud copy is easy to browse and manage in OneDrive.
+3. **Sync both ways** once with *Preview only* ticked, then for real.
+4. Tick **Automatic sync** (every 5-120 min). It keeps running while the app is closed:
+   a Task Scheduler task on Windows, a systemd user timer on the Steam Deck (Desktop and Game Mode,
+   catches up after sleep). Log: `~/.emu_save_manager/logs/autosync.log`.
 
-**EmuDeck Cloud** (EmuDeck's own Patreon storage)
-1. On the Deck, CloudSync must already be set up with EmuDeck Cloud.
-2. PC: open **Cloud Sync...**, get rclone (Download rclone), click **Set up EmuDeck Cloud...** and paste
-   your EmuDeck token (`Emulation/saves/.token` on the Deck; it looks like `12345---abc...`).
-   Like EmuDeck, the app sends it to `cloud.emudeck.com` to get storage keys, saves those as the rclone
-   remotes `Emudeck-cloud` (Backblaze B2) and `Emudeck-cloud2` (Wasabi), picks the one that holds your
-   Deck's saves and fills in the base folder (`cs<id>/Emudeck/saves`). The token itself is not stored.
-3. Run **Sync both ways** (tick *Preview only* first). After an upload a new `.hash` is written so the
-   Deck's CloudSync notices the change and downloads it.
+How conflicts are handled: newest file wins, nothing is ever deleted. Files a download replaces go to
+`<backup folder>/cloud_overwritten/`; files an upload replaces go to `<base parent>/EmuSaveManager-overwritten/`
+in the cloud (OneDrive's own version history is there as well). A background sync is skipped while PCSX2,
+DuckStation, RetroArch, Dolphin or xemu is running, and only one sync runs at a time.
+Use PCSX2 *folder* memory cards (Settings > Memory Cards > Convert) so each game's save is its own file;
+a whole-card `.ps2` file changed on both devices between syncs keeps only the newer copy (the other is backed up).
 
-**OneDrive**: on the PC use **Set up OneDrive...**, pick the remote, base `EmuDeck/saves`.
+Command line (what the scheduler runs): `EmuSaveManager --sync` (add `--dry-run` to preview,
+`--download` / `--upload` for one direction, `--force` to sync even while an emulator runs).
 
-Newer file wins, nothing is deleted. Overwritten local files go to `<backup folder>/cloud_overwritten/`.
-EmuDeck's bookkeeping files (`.hash`, `.token`, `.last_upload`...) are never copied.
-Tip: use PCSX2 *folder* memory cards (Settings > Memory Cards > Convert) so each game's save is its own
-file; whole-card `.ps2` files can't be merged if two devices change the same card between syncs.
+On the Steam Deck the app finds EmuDeck's `Emulation/saves/<emulator>/...` folders automatically.
+
+**EmuDeck Cloud** works too: **Set up EmuDeck Cloud...** uses the EmuDeck app's Patreon sign-in on that
+computer, picks Backblaze (`Emudeck-cloud`) or Wasabi (`Emudeck-cloud2`) and the `cs<id>/Emudeck/saves`
+folder, and writes a new `.hash` after uploads so EmuDeck's own CloudSync notices the change.
 
 ## PS2 Card Manager
 Two cards side by side (left and right). Each side can be a card **file** (`Mcd001.ps2`) or a PCSX2

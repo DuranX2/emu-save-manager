@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
+import autosync
 import cloudsync as cs
 
 
@@ -15,7 +16,7 @@ class CloudSyncDialog(tk.Toplevel):
         super().__init__(app)
         self.app = app
         self.title("Cloud Sync (OneDrive or EmuDeck Cloud, EmuDeck layout)")
-        self.geometry("980x700")
+        self.geometry("980x780")
         self.minsize(820, 560)
         self.transient(app)
         self.cfg = app.cfg.setdefault("cloud", {})
@@ -27,6 +28,7 @@ class CloudSyncDialog(tk.Toplevel):
         self._build()
         self._autodetect()
         self._load_pairs()
+        self._refresh_auto()
         self.v_base.trace_add("write", lambda *_: [self._refresh_row(k) for k in self.pairs])
         self.protocol("WM_DELETE_WINDOW", self._close)
         self.after(100, self._poll)
@@ -96,10 +98,31 @@ class CloudSyncDialog(tk.Toplevel):
         self.cancel_btn = ttk.Button(act, text="Cancel", command=self.cancel, state="disabled")
         self.cancel_btn.pack(side="right")
 
-        note = ("Newer file wins and nothing is ever deleted. Files replaced by a download are moved to "
-                "your backup folder first. Close your emulators before syncing, and avoid editing the "
-                "same memory card on two devices between syncs.")
+        note = ("Newer file wins and nothing is ever deleted: files replaced by a download go to your "
+                "backup folder, files replaced by an upload go to EmuSaveManager-overwritten in the cloud. "
+                "Close your emulators before syncing, and avoid editing the same memory card file on two "
+                "devices between syncs (PCSX2 folder memory cards keep each game separate).")
         ttk.Label(self, text=note, wraplength=930, foreground="#555", padding=(10, 0)).pack(anchor="w")
+
+        auto = ttk.LabelFrame(self, text="Automatic sync (runs in the background, even when this app is closed)",
+                              padding=8)
+        auto.pack(fill="x", padx=10, pady=(8, 0))
+        self.v_auto = tk.BooleanVar(value=False)
+        self.v_interval = tk.StringVar(value=str(self.cfg.get("auto_minutes", 15)))
+        ttk.Checkbutton(auto, text="Sync both ways every", variable=self.v_auto,
+                        command=self.toggle_auto).pack(side="left")
+        iv = ttk.Combobox(auto, textvariable=self.v_interval, width=5, state="readonly",
+                          values=[str(m) for m in autosync.INTERVALS])
+        iv.pack(side="left", padx=4)
+        iv.bind("<<ComboboxSelected>>", lambda e: self.toggle_auto(changed_interval=True))
+        ttk.Label(auto, text="minutes").pack(side="left")
+        ttk.Button(auto, text="Open sync log", command=self.open_log).pack(side="right")
+        self.auto_status = ttk.Label(self, text="", foreground="#1f5fa8", padding=(12, 2))
+        self.auto_status.pack(anchor="w")
+        ttk.Label(self, text="Skipped automatically while PCSX2, DuckStation, RetroArch, Dolphin or xemu is "
+                             "running. Set this up the same way on the Steam Deck (same cloud remote and "
+                             "base folder) and both stay in sync through the cloud.",
+                  wraplength=930, foreground="#555", padding=(10, 2)).pack(anchor="w")
 
         logf = ttk.Frame(self, padding=10)
         logf.pack(fill="both", expand=True)
@@ -269,6 +292,51 @@ class CloudSyncDialog(tk.Toplevel):
 
         self._launch(runner, work)
 
+    # ---- automatic sync ----------------------------------------------------------------------
+    def _refresh_auto(self):
+        on, desc = autosync.schedule_status()
+        self.v_auto.set(on)
+        last = autosync.read_status()
+        tail = ""
+        if last:
+            when = last.get("time", "").replace("T", " ")
+            tail = f"  ·  last sync {when}: {last.get('message') or last.get('result', '')}"
+        self.auto_status.config(text=f"Automatic sync: {desc}{tail}")
+
+    def toggle_auto(self, changed_interval=False):
+        if changed_interval and not self.v_auto.get():
+            self.cfg["auto_minutes"] = int(self.v_interval.get())
+            self._save()
+            return
+        if self.v_auto.get():
+            if not self._ready():
+                self.v_auto.set(False)
+                return
+            self._save()
+            minutes = int(self.v_interval.get())
+            try:
+                desc = autosync.enable_schedule(minutes)
+            except (OSError, ValueError) as ex:
+                self.v_auto.set(False)
+                messagebox.showerror("Automatic sync", str(ex), parent=self)
+                return
+            self.cfg["auto_minutes"] = minutes
+            self._save()
+            self._log_now(f"Automatic sync is on: {desc}. Log: {autosync.LOG_FILE}")
+        else:
+            try:
+                autosync.disable_schedule()
+            except OSError as ex:
+                messagebox.showerror("Automatic sync", str(ex), parent=self)
+            self._log_now("Automatic sync is off.")
+        self._refresh_auto()
+
+    def open_log(self):
+        autosync.LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        if not autosync.LOG_FILE.exists():
+            autosync.LOG_FILE.write_text("", encoding="utf-8")
+        self.app.open_folder(autosync.LOG_FILE)
+
     # ---- rows ------------------------------------------------------------------------------
     def _load_pairs(self):
         self.tree.delete(*self.tree.get_children())
@@ -368,41 +436,23 @@ class CloudSyncDialog(tk.Toplevel):
                 return
         runner = cs.RcloneRunner(self.v_rclone.get(), self.v_conf.get(), self._write)
         remote, base = self.v_remote.get(), self.v_base.get()
-        stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        backup_root = self.app.backup_dir / "cloud_overwritten" / stamp
-
-        emudeck_layout = base.strip("/ ").lower().endswith("emudeck/saves")
+        log = autosync.Log(echo=self._write)
 
         def work():
-            ok = failed = 0
-            uploaded = set()
-            for p in jobs:
-                if runner.cancelled:
-                    break
-                rpath = cs.remote_path(remote, base, p["sub"])
-                self._write(f"\n== {p['emu']} / {p['label']} ==")
-                steps = ["download", "upload"] if mode == "both" else [mode]
-                for step in steps:
-                    if runner.cancelled:
-                        break
-                    self._write(("Downloading" if step == "download" else "Uploading") + f"  {rpath}")
-                    bk = backup_root / p["emu"] / p["label"] if step == "download" else None
-                    res = cs.sync_pair(runner, step, Path(p["local"]), rpath, dry, bk)
-                    if res == "nothing-in-cloud":
-                        self._write("Nothing in the cloud for this folder yet.")
-                    elif res == "failed":
-                        failed += 1
-                    else:
-                        ok += 1
-                        if step == "upload":
-                            uploaded.add(cs.emulator_folder(p["sub"]))
-            if uploaded and emudeck_layout and not dry and not runner.cancelled:
-                self._write("\nTelling EmuDeck devices there are new saves (.hash)…")
-                if not cs.bump_emudeck_hash(runner, remote, base, uploaded):
-                    self._write("Could not update .hash - your Deck may not download these "
-                                "changes until EmuDeck uploads from it.")
-            tail = "Cancelled. " if runner.cancelled else ""
-            self._write(f"\n{tail}Finished{' (preview)' if dry else ''}: {ok} step(s) OK, {failed} failed.")
+            lock = autosync.SyncLock()
+            if not lock.acquire():
+                self._write("A background sync is running right now - try again in a minute.")
+                return
+            try:
+                ok, failed = autosync.run_jobs(runner, jobs, remote, base, mode, dry,
+                                               self.app.backup_dir, log)
+                tail = "Cancelled. " if runner.cancelled else ""
+                msg = f"{ok} step(s) OK, {failed} failed" + (" (preview)" if dry else "")
+                log(f"\n{tail}Finished: {msg}.")
+                autosync.write_status(result="ok" if not failed else "failed", ok=ok, failed=failed,
+                                      message=msg + " (from the window)")
+            finally:
+                lock.release()
 
         self._launch(runner, work)
 
@@ -434,6 +484,7 @@ class CloudSyncDialog(tk.Toplevel):
                     self._set_busy(False)
                     self.runner = None
                     self.app.refresh_all()
+                    self._refresh_auto()
                 elif msg[0] == "emudeck":
                     _tag, conf, user, remote = msg
                     self.cfg["emudeck_user"] = user

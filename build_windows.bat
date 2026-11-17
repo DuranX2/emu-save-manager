@@ -7,7 +7,7 @@ cd /d "%~dp0"
 
 py -3 -m pip install --upgrade pyinstaller || goto :err
 py -3 -m PyInstaller --noconfirm --clean --windowed --name EmuSaveManager ^
-  --hidden-import ps2mc --hidden-import ps2folder --hidden-import cloudsync ^
+  --hidden-import ps2mc --hidden-import ps2folder --hidden-import cloudsync --hidden-import autosync ^
   --hidden-import ui_ps2cards --hidden-import ui_cloud ^
   emu_save_manager.py || goto :err
 

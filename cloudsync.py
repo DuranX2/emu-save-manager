@@ -322,14 +322,23 @@ def copy_args(src: str, dst: str, dry_run: bool, backup_dir=None):
 def sync_pair(runner: RcloneRunner, direction: str, local: Path, remote: str,
               dry_run: bool, backup_dir=None) -> str:
     """direction: 'download' (cloud -> PC) or 'upload' (PC -> cloud).
+    backup_dir: where replaced files go - a local folder for downloads, a path on the
+    same remote ('remote:folder') for uploads.
     Returns 'ok', 'nothing-in-cloud' or 'failed'."""
     if direction == "download":
         rc = runner.run(copy_args(remote, str(local), dry_run, backup_dir))
         if rc == 3:
             return "nothing-in-cloud"
     else:
-        rc = runner.run(copy_args(str(local), remote, dry_run))
+        rc = runner.run(copy_args(str(local), remote, dry_run, backup_dir))
     return "ok" if rc == 0 else "failed"
+
+
+def remote_backup_root(remote: str, base: str) -> str:
+    """'remote:<parent of base>/EmuSaveManager-overwritten' - beside, never inside, the synced folders."""
+    parts = [p for p in base.strip("/\\").split("/") if p]
+    parent = "/".join(parts[:-1])
+    return f"{remote}:" + (f"{parent}/" if parent else "") + "EmuSaveManager-overwritten"
 
 
 def test_connection(runner: RcloneRunner, remote: str, base: str = "") -> bool:
