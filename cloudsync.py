@@ -1,12 +1,22 @@
 """
-cloudsync.py - sync emulator saves with a cloud drive (OneDrive) through rclone,
-using the same layout as EmuDeck's CloudSync so a PC and a Steam Deck can share saves.
+cloudsync.py - sync emulator saves with the cloud through rclone, using the same
+layout as EmuDeck's CloudSync so a PC and a Steam Deck can share saves.  Works
+with a OneDrive remote and with EmuDeck Cloud (EmuDeck's own Patreon storage).
 
 EmuDeck layout
 --------------
   local  : Emulation/saves/<emulator>/...          (EmuDeck keeps these as links)
-  cloud  : <remote>:EmuDeck/saves/<emulator>/...
+  cloud  : <remote>:<cs_user>Emudeck/saves/<emulator>/...
   tools  : Emulation/tools/rclone/rclone(.exe) and rclone.conf
+
+EmuDeck Cloud (from EmuDeck's functions/ToolScripts/emuDeckCloudSync.sh)
+-------------------------------------------------------------------------
+  The Patreon token ("<user>---<secret>") is POSTed as {"token": "<user>|||<secret>"}
+  to https://cloud.emudeck.com/register.php, which answers with storage keys:
+    "Emudeck-cloud"  : rclone type b2 (Backblaze),  base  cs<user>/Emudeck/saves
+    "Emudeck-cloud2" : rclone type s3 (Wasabi),     base  emudeck-saves/cs<user>/Emudeck/saves
+  A device only downloads an emulator's saves when <base>/<emulator>/.hash in the
+  cloud differs from its own, so after uploading, a fresh .hash is written there.
 
 This module never deletes anything: it only runs `rclone copy --update`
 (newer file wins), and downloads move any file they would replace into a backup folder.
@@ -14,12 +24,18 @@ No GUI dependencies.
 """
 
 import configparser
+import hashlib
 import io
+import json
 import os
 import platform
+import re
 import shlex
 import shutil
 import subprocess
+import tempfile
+import time
+import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -46,7 +62,29 @@ EMUDECK_SUBPATHS = {
 # Huge files: off by default so a first sync doesn't upload gigabytes.
 DISABLED_BY_DEFAULT = {("Xemu", "HDD and EEPROM")}
 
-EXCLUDES = ["desktop.ini", "Thumbs.db", ".DS_Store", "*.esm_tmp", "*.tmp"]
+EXCLUDES = ["desktop.ini", "Thumbs.db", ".DS_Store", "*.esm_tmp", "*.tmp",
+            # EmuDeck CloudSync's own bookkeeping files
+            ".hash", ".token", ".temp", ".last_upload", ".last_download", ".fail_upload",
+            ".fail_download", ".pending_upload", ".no_upload", "cloudsync.emudeck",
+            "dl_cloudsync.emudeck"]
+
+EMUDECK_CLOUD_REGISTER_URL = "https://cloud.emudeck.com/register.php"
+# remote name -> rclone settings (keys filled in from register.php) and cloud base folder
+EMUDECK_CLOUD_VARIANTS = {
+    "Emudeck-cloud": {
+        "label": "EmuDeck Cloud (Backblaze B2)",
+        "settings": {"type": "b2", "hard_delete": "false"},
+        "keys": ("account", "key"),
+        "base": "cs{user}/Emudeck/saves",
+    },
+    "Emudeck-cloud2": {
+        "label": "EmuDeck Cloud (Wasabi)",
+        "settings": {"type": "s3", "provider": "Wasabi", "region": "eu-west-1",
+                     "endpoint": "s3.eu-west-1.wasabisys.com"},
+        "keys": ("access_key_id", "secret_access_key"),
+        "base": "emudeck-saves/cs{user}/Emudeck/saves",
+    },
+}
 
 
 def default_subpath(emulator: str, label: str) -> str:
@@ -63,9 +101,13 @@ def default_subpath(emulator: str, label: str) -> str:
 def emudeck_roots():
     """Existing 'Emulation' folders where EmuDeck keeps saves and tools."""
     home = Path.home()
-    cands = [home / "Emulation", home / "EmuDeck" / "Emulation"]
+    cands = []
+    ep = emudeck_settings().get("emulationPath")
+    if ep:
+        cands.append(Path(ep))
+    cands += [home / "Emulation", home / "EmuDeck" / "Emulation"]
     if IS_WIN:
-        for letter in "CDEFGH":
+        for letter in "CDEFGHIJKLMNOPQRSTUVWXYZB":
             cands.append(Path(f"{letter}:/Emulation"))
     else:
         cands.append(Path("/run/media/mmcblk0p1/Emulation"))
@@ -88,6 +130,71 @@ def emudeck_roots():
                 out.append(c)
         except OSError:
             pass
+    return out
+
+
+def emudeck_appdata() -> Path:
+    """EmuDeck's own data folder (its Electron app data and settings file)."""
+    if IS_WIN:
+        return Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming")) / "EmuDeck"
+    return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "EmuDeck"
+
+
+def emudeck_settings() -> dict:
+    """A few values from EmuDeck's settings file (settings.ps1 on Windows, settings.sh on Linux)."""
+    out = {}
+    cands = [emudeck_appdata() / "settings.ps1", emudeck_appdata() / "settings.sh",
+             Path.home() / "EmuDeck" / "settings.ps1",
+             Path.home() / ".config" / "EmuDeck" / "settings.sh", Path.home() / "emudeck" / "settings.sh"]
+    for f in cands:
+        try:
+            text = f.read_text(encoding="utf-8-sig", errors="replace")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            m = re.match(r'^\s*\$?(emulationPath|savesPath|toolsPath|cloud_sync_provider|cs_user)\s*=\s*"?([^"]*)"?\s*$',
+                         line)
+            if m and m.group(2) and m.group(1) not in out:
+                out[m.group(1)] = m.group(2)
+        if out:
+            break
+    return out
+
+
+_FULL_TOKEN = re.compile(rb"([A-Za-z0-9_\-]{3,32})\|\|\|([A-Za-z0-9_\-]{20,128})")
+
+
+def find_emudeck_signins():
+    """Full EmuDeck Cloud tokens ('<account id>|||<secret>') that the EmuDeck app on this
+    computer has stored after a Patreon sign-in, newest first.  EmuDeck keeps it in its
+    Chromium 'Local Storage' under the key 'patreon_token'."""
+    folder = emudeck_appdata() / "Local Storage" / "leveldb"
+    found = []
+    try:
+        files = sorted(folder.iterdir(), key=lambda f: f.stat().st_mtime)
+    except OSError:
+        return []
+    for f in files:
+        if f.suffix.lower() not in (".log", ".ldb"):
+            continue
+        try:
+            data = f.read_bytes()
+        except OSError:
+            continue
+        for utf16, blob in ((False, data), (True, data.replace(b"\x00", b""))):
+            for m in re.finditer(rb"patreon_token", blob):
+                t = _FULL_TOKEN.search(blob, m.end(), m.end() + 400)
+                if not t:
+                    continue
+                tok = t.group(0).decode("ascii")
+                # values may be stored as UTF-16; only trust such a match if it really is
+                if utf16 and tok.encode("utf-16-le") not in data:
+                    continue
+                found.append(tok)
+    out = []
+    for tok in reversed(found):                 # newest file / latest write first
+        if tok not in out:
+            out.append(tok)
     return out
 
 
@@ -134,6 +241,9 @@ def list_remotes(conf_path: str):
 
 
 def pick_default_remote(remotes) -> str:
+    for n, _t in remotes:
+        if n in EMUDECK_CLOUD_VARIANTS:
+            return n
     onedrive = [n for n, t in remotes if t == "onedrive"]
     for n in onedrive:
         if n.lower().startswith("emudeck"):
@@ -176,6 +286,18 @@ class RcloneRunner:
         self._proc = None
         return rc
 
+    def capture(self, args):
+        """Run rclone quietly; returns (exit code, output text).  Output is not logged."""
+        cmd = [self.exe] + (["--config", self.conf] if self.conf else []) + list(args)
+        kw = {"creationflags": 0x08000000} if IS_WIN else {}
+        try:
+            r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                               stdin=subprocess.DEVNULL, text=True, encoding="utf-8",
+                               errors="replace", timeout=120, **kw)
+        except (OSError, subprocess.TimeoutExpired) as ex:
+            return 127, str(ex)
+        return r.returncode, r.stdout
+
     def cancel(self):
         self.cancelled = True
         p = self._proc
@@ -200,49 +322,243 @@ def copy_args(src: str, dst: str, dry_run: bool, backup_dir=None):
 def sync_pair(runner: RcloneRunner, direction: str, local: Path, remote: str,
               dry_run: bool, backup_dir=None) -> str:
     """direction: 'download' (cloud -> PC) or 'upload' (PC -> cloud).
+    backup_dir: where replaced files go - a local folder for downloads, a path on the
+    same remote ('remote:folder') for uploads.
     Returns 'ok', 'nothing-in-cloud' or 'failed'."""
     if direction == "download":
         rc = runner.run(copy_args(remote, str(local), dry_run, backup_dir))
         if rc == 3:
             return "nothing-in-cloud"
     else:
-        rc = runner.run(copy_args(str(local), remote, dry_run))
+        rc = runner.run(copy_args(str(local), remote, dry_run, backup_dir))
     return "ok" if rc == 0 else "failed"
 
 
-def test_connection(runner: RcloneRunner, remote: str) -> bool:
+def remote_backup_root(remote: str, base: str) -> str:
+    """'remote:<parent of base>/EmuSaveManager-overwritten' - beside, never inside, the synced folders."""
+    parts = [p for p in base.strip("/\\").split("/") if p]
+    parent = "/".join(parts[:-1])
+    return f"{remote}:" + (f"{parent}/" if parent else "") + "EmuSaveManager-overwritten"
+
+
+def test_connection(runner: RcloneRunner, remote: str, base: str = "") -> bool:
+    if base and is_emudeck_cloud(remote):
+        # EmuDeck Cloud keys may only list the user's own folder, not the whole bucket
+        return runner.run(["lsf", f"{remote}:{base.strip('/')}", "--max-depth", "1"]) == 0
     return runner.run(["lsd", f"{remote}:", "--max-depth", "1"]) == 0
+
+
+# ---------------------------------------------------------------------------
+# EmuDeck Cloud
+# ---------------------------------------------------------------------------
+class EmuDeckCloudError(Exception):
+    pass
+
+
+def is_emudeck_cloud(remote: str) -> bool:
+    return remote in EMUDECK_CLOUD_VARIANTS
+
+
+def parse_token(token: str):
+    """'<user>---<secret>' (as EmuDeck shows/stores it) -> (token for the API, user id)."""
+    t = (token or "").strip().strip('"').strip()
+    t = t.replace("---", "|||")
+    user = t.split("|", 1)[0].strip()
+    if t and "|||" not in t and re.fullmatch(r"[A-Za-z0-9_\-]{20,}", t):
+        raise EmuDeckCloudError(
+            "This is the short Patreon login token (from the .token file). EmuDeck Cloud needs the "
+            "full token, which also contains your account ID (it looks like  ABCD1234|||<secret> ).\n\n"
+            "Easiest: sign in to Patreon in the EmuDeck app on this computer, then use "
+            "'Set up EmuDeck Cloud…' again and let it use that sign-in.")
+    if not user or "|||" not in t or any(c.isspace() for c in t):
+        raise EmuDeckCloudError("That doesn't look like an EmuDeck Cloud token. It should look like "
+                                "<account id>|||<secret>  (or with --- instead of |||).")
+    return t, user
+
+
+EMUDECK_CLOUD_LOGIN_URL = "https://cloud.emudeck.com/login.php"
+
+
+def emudeck_cloud_type(token: str, url: str = EMUDECK_CLOUD_LOGIN_URL, timeout=20):
+    """Ask EmuDeck which cloud this account uses, like the EmuDeck app does:
+    'cloud1' -> Emudeck-cloud (B2), anything else -> Emudeck-cloud2 (Wasabi).
+    Returns the remote name, or None if the question could not be answered."""
+    api_token, _user = parse_token(token)
+    req = urllib.request.Request(url, data=json.dumps({"token": api_token}).encode(), method="POST",
+                                 headers={"Content-Type": "text/plain;charset=UTF-8",
+                                          "User-Agent": HTTP_HEADERS["User-Agent"]})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            data = json.loads(r.read().decode("utf-8", "replace"))
+    except Exception:  # noqa - optional: detection falls back to looking for the saves
+        return None
+    cloud = data.get("cloud") if isinstance(data, dict) else None
+    if not cloud:
+        return None
+    return "Emudeck-cloud" if str(cloud) == "cloud1" else "Emudeck-cloud2"
+
+
+def emudeck_cloud_base(remote: str, user: str) -> str:
+    return EMUDECK_CLOUD_VARIANTS[remote]["base"].format(user=user)
+
+
+def register_emudeck_cloud(token: str, url: str = EMUDECK_CLOUD_REGISTER_URL, timeout=30):
+    """Exchange the EmuDeck (Patreon) token for storage keys, exactly like EmuDeck does.
+    Returns {"user", "cloud_key_id", "cloud_key", "cloud"}.  The token is not kept."""
+    api_token, user = parse_token(token)
+    body = json.dumps({"token": api_token}).encode()
+    req = urllib.request.Request(url, data=body, method="POST",
+                                 headers={"Content-Type": "application/json",
+                                          "User-Agent": HTTP_HEADERS["User-Agent"]})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            raw = r.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as ex:
+        raise EmuDeckCloudError(f"EmuDeck Cloud refused the token (HTTP {ex.code}).")
+    except (urllib.error.URLError, OSError) as ex:
+        raise EmuDeckCloudError(f"Could not reach cloud.emudeck.com: {ex}")
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        raise EmuDeckCloudError("Unexpected answer from cloud.emudeck.com: " + raw[:200])
+    kid, key = str(data.get("cloud_key_id") or ""), str(data.get("cloud_key") or "")
+    if not kid or not key or kid == "null" or key == "null":
+        raise EmuDeckCloudError("EmuDeck Cloud did not return storage keys. Check the token and "
+                                "that your Patreon membership includes EmuDeck Cloud.")
+    return {"user": user, "cloud_key_id": kid, "cloud_key": key, "cloud": data.get("cloud")}
+
+
+def write_emudeck_cloud_remotes(conf_path: str, keys: dict):
+    """Add/refresh the Emudeck-cloud and Emudeck-cloud2 remotes in an rclone.conf,
+    keeping every other remote.  Returns {remote name: cloud base folder}."""
+    path = Path(conf_path)
+    cp = configparser.ConfigParser(interpolation=None, strict=False)
+    cp.optionxform = str
+    if path.is_file():
+        try:
+            cp.read(path, encoding="utf-8")
+        except (configparser.Error, UnicodeDecodeError) as ex:
+            raise EmuDeckCloudError(f"Cannot read {path}: {ex}")
+    bases = {}
+    for name, v in EMUDECK_CLOUD_VARIANTS.items():
+        sec = dict(v["settings"])
+        id_key, secret_key = v["keys"]
+        sec[id_key], sec[secret_key] = keys["cloud_key_id"], keys["cloud_key"]
+        cp[name] = sec
+        bases[name] = emudeck_cloud_base(name, keys["user"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
+        cp.write(f)
+    if path.is_file():
+        shutil.copy2(path, path.with_suffix(path.suffix + ".bak"))
+    os.replace(tmp, path)
+    return bases
+
+
+def detect_emudeck_cloud(runner: RcloneRunner, bases: dict, hint=None):
+    """Which EmuDeck Cloud variant holds this account's saves?
+    Returns (remote name or None, {remote: 'has-saves'|'empty'|'error: ...'})."""
+    report = {}
+    for name, base in bases.items():
+        rc, out = runner.capture(["lsf", f"{name}:{base}", "--max-depth", "1"])
+        lines = [l for l in out.splitlines() if l.strip()]
+        if rc == 0:
+            report[name] = "has-saves" if lines else "empty"
+        elif rc == 3 or "directory not found" in out.lower():
+            report[name] = "empty"
+        else:
+            report[name] = "error: " + (lines[-1] if lines else f"exit code {rc}")
+    with_saves = [n for n, r in report.items() if r == "has-saves"]
+    if len(with_saves) == 1:
+        return with_saves[0], report
+    if hint in bases and not with_saves and report.get(hint) == "empty":
+        return hint, report
+    if hint in bases and hint in with_saves:
+        return hint, report
+    hint = str(hint or "").lower()
+    if not with_saves:
+        working = [n for n, r in report.items() if r == "empty"]
+        if "wasabi" in hint or "s3" in hint:
+            return ("Emudeck-cloud2" if "Emudeck-cloud2" in working else None), report
+        if "b2" in hint or "backblaze" in hint:
+            return ("Emudeck-cloud" if "Emudeck-cloud" in working else None), report
+        return (working[0] if len(working) == 1 else None), report
+    return None, report
+
+
+def emulator_folder(sub: str) -> str:
+    """'pcsx2/saves' -> 'pcsx2' (the level EmuDeck keeps its .hash at)."""
+    return sub.strip("/\\").split("/", 1)[0]
+
+
+def bump_emudeck_hash(runner: RcloneRunner, remote: str, base: str, emu_dirs) -> bool:
+    """Write a fresh .hash for each emulator (and the root) so EmuDeck devices download."""
+    token = hashlib.sha256(f"{time.time()}-{os.getpid()}-{os.urandom(8).hex()}".encode()).hexdigest()
+    fd, tmp = tempfile.mkstemp(suffix=".hash")
+    ok = True
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+            f.write(token + "\n")
+        for d in sorted(set(emu_dirs)) + [""]:
+            target = remote_path(remote, base, f"{d}/.hash" if d else ".hash")
+            ok = runner.run(["copyto", tmp, target]) == 0 and ok
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+    return ok
 
 
 # ---------------------------------------------------------------------------
 # Installing rclone / configuring a remote
 # ---------------------------------------------------------------------------
-def rclone_download_url() -> str:
+RCLONE_PINNED = "v1.69.0"          # the version EmuDeck installs; used as a last resort
+HTTP_HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; EmuSaveManager; +https://rclone.org)",
+                "Accept": "*/*"}
+
+
+def _platform_tag() -> str:
     machine = platform.machine().lower()
     arch = "arm64" if machine in ("arm64", "aarch64") else "amd64"
     osname = {"Windows": "windows", "Linux": "linux", "Darwin": "osx"}.get(platform.system())
     if not osname:
         raise OSError("Unsupported operating system")
-    return f"https://downloads.rclone.org/rclone-current-{osname}-{arch}.zip"
+    return f"{osname}-{arch}"
 
 
-def install_rclone_from_zip(zip_bytes: bytes, dest_dir: Path = OWN_RCLONE_DIR) -> Path:
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
-        member = next((n for n in z.namelist() if n == EXE or n.endswith("/" + EXE)), None)
-        if member is None:
-            raise OSError(f"{EXE} not found in the downloaded archive")
-        target = dest_dir / EXE
-        with z.open(member) as src, open(target, "wb") as dst:
-            shutil.copyfileobj(src, dst)
-    if not IS_WIN:
-        os.chmod(target, 0o755)
-    return target
+def rclone_download_url() -> str:
+    return f"https://downloads.rclone.org/rclone-current-{_platform_tag()}.zip"
 
 
-def download_rclone(progress=None, dest_dir: Path = OWN_RCLONE_DIR) -> Path:
-    """Download the official rclone build for this OS (https://downloads.rclone.org)."""
-    with urllib.request.urlopen(rclone_download_url(), timeout=60) as r:
+def _github_latest_url(tag: str, timeout=20) -> str:
+    req = urllib.request.Request("https://api.github.com/repos/rclone/rclone/releases/latest",
+                                 headers=dict(HTTP_HEADERS, Accept="application/vnd.github+json"))
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        data = json.loads(r.read().decode("utf-8", "replace"))
+    for a in data.get("assets", []):
+        name = a.get("name", "")
+        if name.endswith(f"-{tag}.zip"):
+            return a["browser_download_url"]
+    raise OSError("no matching file in the latest GitHub release")
+
+
+def rclone_download_candidates():
+    """(description, url or callable returning a url), tried in order."""
+    tag = _platform_tag()
+    return [
+        ("downloads.rclone.org", rclone_download_url()),
+        ("GitHub (latest release)", lambda: _github_latest_url(tag)),
+        (f"GitHub ({RCLONE_PINNED}, the version EmuDeck uses)",
+         f"https://github.com/rclone/rclone/releases/download/{RCLONE_PINNED}/"
+         f"rclone-{RCLONE_PINNED}-{tag}.zip"),
+    ]
+
+
+def _fetch(url: str, progress=None, timeout=60) -> bytes:
+    req = urllib.request.Request(url, headers=HTTP_HEADERS)
+    with urllib.request.urlopen(req, timeout=timeout) as r:
         total = int(r.headers.get("Content-Length") or 0)
         buf = bytearray()
         while True:
@@ -252,7 +568,47 @@ def download_rclone(progress=None, dest_dir: Path = OWN_RCLONE_DIR) -> Path:
             buf += chunk
             if progress and total:
                 progress(len(buf) / total)
-    return install_rclone_from_zip(bytes(buf), dest_dir)
+    return bytes(buf)
+
+
+def install_rclone_from_zip(zip_bytes: bytes, dest_dir: Path = OWN_RCLONE_DIR) -> Path:
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        z = zipfile.ZipFile(io.BytesIO(zip_bytes))
+    except zipfile.BadZipFile:
+        raise OSError("the download was not a zip file")
+    with z:
+        member = next((n for n in z.namelist() if n == EXE or n.endswith("/" + EXE)), None)
+        if member is None:
+            raise OSError(f"{EXE} not found in the downloaded archive")
+        target = dest_dir / EXE
+        tmp = dest_dir / (EXE + ".part")
+        with z.open(member) as src, open(tmp, "wb") as dst:
+            shutil.copyfileobj(src, dst)
+        os.replace(tmp, target)
+    if not IS_WIN:
+        os.chmod(target, 0o755)
+    return target
+
+
+def download_rclone(progress=None, dest_dir: Path = OWN_RCLONE_DIR, log=None, candidates=None) -> Path:
+    """Download the official rclone build for this OS, trying rclone's own download
+    server first and its GitHub releases after that."""
+    errors = []
+    for desc, url in (candidates or rclone_download_candidates()):
+        try:
+            if callable(url):
+                url = url()
+            if log:
+                log(f"Trying {desc}: {url}")
+            return install_rclone_from_zip(_fetch(url, progress), dest_dir)
+        except Exception as ex:  # noqa - any failure: try the next source
+            errors.append(f"{desc}: {ex}")
+            if log:
+                log(f"  failed: {ex}")
+    raise OSError("rclone could not be downloaded automatically.\n  " + "\n  ".join(errors)
+                  + "\nDownload it from https://rclone.org/downloads/ , unzip it, and use Browse… "
+                    "to pick rclone" + (".exe" if IS_WIN else "") + ".")
 
 
 def open_rclone_config_terminal(exe: str, conf: str) -> bool:

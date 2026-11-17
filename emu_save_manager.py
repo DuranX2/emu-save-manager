@@ -5,11 +5,16 @@ Emulator Save Manager
 A cross-platform GUI (tkinter, standard library only) to back up and restore
 save data for PCSX2, Xemu, DuckStation and RetroArch, plus custom emulators.
 
-  * PS2 Card Manager : browse / import / export (.psu) / delete saves on PCSX2 cards
-  * Cloud Sync       : sync with OneDrive via rclone, using EmuDeck's folder layout
-                       so a PC and a Steam Deck share the same saves
+  * PS2 Card Manager : two cards side by side - copy / move saves between them,
+                      create cards, import / export (.psu), delete
+  * BIOS Vault       : your own BIOS files identified by content, kept in one place,
+                       synced between devices and installed into each emulator
+  * Cloud Sync       : two-way sync with OneDrive (or EmuDeck Cloud) via rclone, using
+                       EmuDeck's folder layout so a PC and a Steam Deck share the same saves;
+                       optional automatic sync in the background on both
 
-Run:  python emu_save_manager.py      (Python 3.8+; keep the other .py files beside it)
+Run:  python emu_save_manager.py          (Python 3.8+; keep the other .py files beside it)
+      python emu_save_manager.py --sync   one two-way sync without the window
 """
 
 import copy
@@ -67,7 +72,7 @@ def builtin_profiles():
             "recursive": recursive,
         }
 
-    return {
+    return _with_emudeck_folders({
         "PCSX2": {
             "notes": "PlayStation 2. Memory cards and save states. "
                      "Close PCSX2 before restoring. Portable install? Use 'Locations…'.",
@@ -145,8 +150,26 @@ def builtin_profiles():
                      flat / "org.libretro.RetroArch" / "config" / "retroarch" / "states"]),
             ],
         },
-    }
+    })
 
+
+def _with_emudeck_folders(profiles):
+    """EmuDeck points every emulator at Emulation/saves/<emulator>/... (on the Steam Deck these
+    are the folders the emulators really use). Prefer them on Linux, try them last elsewhere."""
+    try:
+        import cloudsync
+        bases = [r / "saves" for r in cloudsync.emudeck_roots()]
+        subs = cloudsync.EMUDECK_SUBPATHS
+    except Exception:  # noqa - never let detection break the app
+        return profiles
+    for emu, prof in profiles.items():
+        for loc in prof["locations"]:
+            sub = subs.get((emu, loc["label"]))
+            if not sub:
+                continue
+            extra = [str(b / sub) for b in bases]
+            loc["candidates"] = extra + loc["candidates"] if SYSTEM == "Linux" else loc["candidates"] + extra
+    return profiles
 
 # --------------------------------------------------------------------------
 # Config
@@ -454,6 +477,7 @@ class App(tk.Tk):
         ttk.Button(top, text="Change…", command=self.change_backup_dir).pack(side="left")
         ttk.Button(top, text="Open", command=self.open_backup_dir).pack(side="left", padx=4)
         ttk.Button(top, text="Cloud Sync…", command=self.open_cloud).pack(side="right")
+        ttk.Button(top, text="BIOS Vault…", command=self.open_bios_vault).pack(side="right", padx=(6, 0))
         ttk.Button(top, text="PS2 Card Manager…", command=self.open_ps2_cards).pack(side="right", padx=6)
 
         panes = ttk.PanedWindow(self, orient="horizontal")
@@ -792,6 +816,10 @@ class App(tk.Tk):
         from ui_ps2cards import PS2CardDialog
         PS2CardDialog(self)
 
+    def open_bios_vault(self):
+        from ui_biosvault import BiosVaultDialog
+        BiosVaultDialog(self)
+
     def open_cloud(self):
         from ui_cloud import CloudSyncDialog
         CloudSyncDialog(self)
@@ -867,5 +895,15 @@ def _fix_frozen_env():
 
 
 if __name__ == "__main__":
+    import sys
     _fix_frozen_env()
+    if "--sync" in sys.argv:            # background two-way cloud sync, no window
+        import autosync
+        sys.exit(autosync.main_cli(sys.argv))
+    if "--bios-scan" in sys.argv:       # identify BIOS files in a folder, change nothing
+        import biosvault
+        folder = sys.argv[sys.argv.index("--bios-scan") + 1:] or ["."]
+        for e in biosvault.scan_any(folder[0]):
+            print(f"{e[0]:<38} {e[1]:<11} {e[2]:<52} {e[3]}")
+        sys.exit(0)
     App().mainloop()
