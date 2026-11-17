@@ -20,6 +20,8 @@ Keep all `.py` files in this folder together and run:
 | `tools/build_bios_db.py` | regenerates `biosdb_data.py` from libretro's System.dat |
 | `autosync.py` | background two-way sync (`--sync`) and its Windows / systemd scheduling - no GUI |
 | `exitwatch.py` | sync after an emulator or ES-DE closes (`--watch`) and starting it at sign-in - no GUI |
+| `savehistory.py` | Save History: earlier versions of synced saves, kept at every sync; restore - no GUI |
+| `ui_history.py` | Save History window |
 
 ## PC <-> Steam Deck: two-way sync through OneDrive (or EmuDeck Cloud)
 Install the app on both (Windows: `EmuSaveManager-Setup.exe`; Steam Deck: see *Building* below), then on
@@ -49,6 +51,16 @@ Command line (what the scheduler runs): `EmuSaveManager --sync` (add `--dry-run`
 `--download` / `--upload` for one direction, `--force` to sync even while an emulator runs).
 
 On the Steam Deck the app finds EmuDeck's `Emulation/saves/<emulator>/...` folders automatically.
+
+## Save History
+Every sync keeps earlier versions of the synced saves on that device: once before the sync (what you changed
+by playing there) and once after it (what arrived from the other device). Only changed files are stored, and
+identical contents only once, in `<backup folder>/history/`. **Save History...** in the main window lists each
+file's versions; **Restore this version** puts one back, and **Restore folder...** puts a whole folder back the
+way it was at a given time (use this for PCSX2 folder memory cards). A restored file gets the current date,
+so the next sync uploads it and the other device picks it up; the version it replaced is kept in the history
+first, so a restore can be undone. Defaults: 10 versions per file, at most 2 GB in total (oldest go first,
+the newest version of a file is never dropped), files over 256 MB (Xemu's hard disk) are skipped.
 
 **EmuDeck Cloud** works too: **Set up EmuDeck Cloud...** uses the EmuDeck app's Patreon sign-in on that
 computer, picks Backblaze (`Emudeck-cloud`) or Wasabi (`Emudeck-cloud2`) and the `cs<id>/Emudeck/saves`

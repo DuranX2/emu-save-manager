@@ -37,6 +37,9 @@ u = ew.systemd_unit(["/home/deck/.local/share/EmuSaveManager/EmuSaveManager", "-
 assert "ExecStart=/home/deck/.local/share/EmuSaveManager/EmuSaveManager --watch" in u and "WantedBy=default.target" in u and "Restart=on-failure" in u
 assert ew.watch_command()[-1] == "--watch"
 # 3. the real loop against real processes named like PCSX2 and ES-DE
+os.makedirs("/tmp/ewbin", exist_ok=True)                  # programs named like ES-DE and PCSX2
+for _n in ("es-de", "pcsx2-qt"):
+    shutil.copy("/bin/sleep", f"/tmp/ewbin/{_n}")
 es = subprocess.Popen(["/tmp/ewbin/es-de", "300"]); emu = subprocess.Popen(["/tmp/ewbin/pcsx2-qt", "300"])
 time.sleep(0.3)
 snap = ew.snapshot(); print("snapshot:", snap)
