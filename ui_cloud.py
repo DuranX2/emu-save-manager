@@ -1,4 +1,4 @@
-"""ui_cloud.py - window for syncing saves with OneDrive in EmuDeck's folder layout."""
+"""ui_cloud.py - window for syncing saves with OneDrive or EmuDeck Cloud in EmuDeck's folder layout."""
 
 import queue
 import threading
@@ -14,7 +14,7 @@ class CloudSyncDialog(tk.Toplevel):
     def __init__(self, app):
         super().__init__(app)
         self.app = app
-        self.title("Cloud Sync (OneDrive, EmuDeck layout)")
+        self.title("Cloud Sync (OneDrive or EmuDeck Cloud, EmuDeck layout)")
         self.geometry("980x700")
         self.minsize(820, 560)
         self.transient(app)
@@ -53,17 +53,23 @@ class CloudSyncDialog(tk.Toplevel):
         ttk.Entry(top, textvariable=self.v_conf).grid(row=1, column=1, sticky="ew", padx=6)
         ttk.Button(top, text="Browse…", command=lambda: self._browse(self.v_conf)).grid(row=1, column=2, sticky="e")
 
-        ttk.Label(top, text="OneDrive remote:").grid(row=2, column=0, sticky="w", pady=2)
-        self.combo = ttk.Combobox(top, textvariable=self.v_remote, width=30)
-        self.combo.grid(row=2, column=1, sticky="w", padx=6)
+        ttk.Label(top, text="Cloud remote:").grid(row=2, column=0, sticky="w", pady=2)
+        rf = ttk.Frame(top)
+        rf.grid(row=2, column=1, sticky="w", padx=6)
+        self.combo = ttk.Combobox(rf, textvariable=self.v_remote, width=20, state="readonly")
+        self.combo.pack(side="left")
+        self.combo.bind("<<ComboboxSelected>>", lambda e: self._on_remote())
+        self.remote_kind = ttk.Label(rf, text="", foreground="#666")
+        self.remote_kind.pack(side="left", padx=8)
         bar2 = ttk.Frame(top)
         bar2.grid(row=2, column=2, sticky="e")
         ttk.Button(bar2, text="Reload", command=self._reload_remotes).pack(side="left")
         ttk.Button(bar2, text="Set up OneDrive…", command=self.setup_remote).pack(side="left", padx=4)
+        ttk.Button(bar2, text="Set up EmuDeck Cloud…", command=self.setup_emudeck_cloud).pack(side="left")
 
         ttk.Label(top, text="Cloud base folder:").grid(row=3, column=0, sticky="w", pady=2)
-        ttk.Entry(top, textvariable=self.v_base, width=30).grid(row=3, column=1, sticky="w", padx=6)
-        ttk.Label(top, text="EmuDeck uses EmuDeck/saves", foreground="#666").grid(row=3, column=2, sticky="e")
+        ttk.Entry(top, textvariable=self.v_base, width=44).grid(row=3, column=1, sticky="w", padx=6)
+        ttk.Label(top, text="Set automatically for EmuDeck Cloud", foreground="#666").grid(row=3, column=2, sticky="e")
 
         frame = ttk.LabelFrame(self, text="What to sync (double-click a row to switch it on or off)", padding=6)
         frame.pack(fill="x", padx=10)
@@ -130,15 +136,37 @@ class CloudSyncDialog(tk.Toplevel):
                           "and Browse to it. (If EmuDeck is installed on this PC it is already in "
                           "Emulation/tools/rclone.)")
         elif not self.combo["values"]:
-            self._log_now("No OneDrive remote found in the rclone config. Use 'Set up OneDrive…', or "
-                          "set up CloudSync in EmuDeck first and point 'rclone config' at its rclone.conf.")
+            self._log_now("No cloud remote found in the rclone config. Use 'Set up EmuDeck Cloud…' "
+                          "or 'Set up OneDrive…'.")
 
     def _reload_remotes(self):
         remotes = cs.list_remotes(self.v_conf.get())
-        names = [n for n, t in remotes if t == "onedrive"]
+        self._remote_types = dict(remotes)
+        usable = [(n, t) for n, t in remotes
+                  if cs.is_emudeck_cloud(n) or t not in ("", "alias", "crypt", "union", "combine")]
+        names = [n for n, _t in usable]
         self.combo["values"] = names
         if self.v_remote.get() not in names:
-            self.v_remote.set(cs.pick_default_remote(remotes))
+            self.v_remote.set(cs.pick_default_remote(usable))
+        self._on_remote(save=False)
+
+    def _on_remote(self, save=True):
+        """Show what kind of remote is selected; EmuDeck Cloud gets its base folder set."""
+        remote = self.v_remote.get()
+        user = self.cfg.get("emudeck_user", "")
+        base = self.v_base.get().strip("/ ")
+        looks_cloud = base.startswith("cs") or base.startswith("emudeck-saves/")
+        if cs.is_emudeck_cloud(remote):
+            self.remote_kind.config(text=cs.EMUDECK_CLOUD_VARIANTS[remote]["label"])
+            if user:
+                self.v_base.set(cs.emudeck_cloud_base(remote, user))
+        else:
+            kind = getattr(self, "_remote_types", {}).get(remote, "")
+            self.remote_kind.config(text={"onedrive": "OneDrive"}.get(kind, kind))
+            if looks_cloud:
+                self.v_base.set(cs.DEFAULT_BASE)
+        if save:
+            self._save()
 
     def download_rclone(self):
         if not messagebox.askyesno("Download rclone", "Download the official rclone build for this system "
@@ -174,6 +202,43 @@ class CloudSyncDialog(tk.Toplevel):
         if not cs.open_rclone_config_terminal(exe, self.v_conf.get()):
             messagebox.showinfo("rclone", "Could not open a terminal. Run this yourself:\n\n"
                                 f"{exe} config --config \"{self.v_conf.get()}\"", parent=self)
+
+    def setup_emudeck_cloud(self):
+        exe = self.v_rclone.get()
+        if not exe or not Path(exe).is_file():
+            messagebox.showinfo("rclone", "Find or download rclone first.", parent=self)
+            return
+        token = simpledialog.askstring(
+            "Set up EmuDeck Cloud",
+            "Paste your EmuDeck token (it looks like 12345---abcdef…).\n\n"
+            "EmuDeck keeps it in the file  Emulation/saves/.token  on a device where you signed in\n"
+            "to EmuDeck Cloud (on the Steam Deck: open it in Dolphin with hidden files shown).\n\n"
+            "It is sent only to cloud.emudeck.com, just as EmuDeck does, to get your storage keys.\n"
+            "The token itself is not saved.", show="•", parent=self)
+        if not token or not token.strip():
+            return
+        try:
+            cs.parse_token(token)
+        except cs.EmuDeckCloudError as ex:
+            messagebox.showerror("EmuDeck Cloud", str(ex), parent=self)
+            return
+        conf = self.v_conf.get() or str(cs.default_rclone_conf())
+        runner = cs.RcloneRunner(exe, conf, self._write)
+        self._write("Contacting cloud.emudeck.com…")
+
+        def work():
+            keys = cs.register_emudeck_cloud(token)
+            bases = cs.write_emudeck_cloud_remotes(conf, keys)
+            self._write(f"Storage keys saved to {conf} (remotes Emudeck-cloud and Emudeck-cloud2).")
+            self._write("Looking for your saves in EmuDeck Cloud…")
+            remote, report = cs.detect_emudeck_cloud(runner, bases, keys.get("cloud"))
+            for name, state in report.items():
+                self._write(f"  {cs.EMUDECK_CLOUD_VARIANTS[name]['label']}: "
+                            + {"has-saves": "your saves are here", "empty": "reachable, no saves yet"}
+                            .get(state, state))
+            self.q.put(("emudeck", conf, keys["user"], remote))
+
+        self._launch(runner, work)
 
     # ---- rows ------------------------------------------------------------------------------
     def _load_pairs(self):
@@ -234,7 +299,8 @@ class CloudSyncDialog(tk.Toplevel):
             messagebox.showinfo("Cloud Sync", "rclone was not found. Use 'Download rclone' or Browse to it.", parent=self)
             return False
         if not remote:
-            messagebox.showinfo("Cloud Sync", "Choose or set up a OneDrive remote first.", parent=self)
+            messagebox.showinfo("Cloud Sync", "Choose or set up a cloud remote first "
+                                "(EmuDeck Cloud or OneDrive).", parent=self)
             return False
         return True
 
@@ -249,8 +315,8 @@ class CloudSyncDialog(tk.Toplevel):
             return
         self._save()
         runner = cs.RcloneRunner(self.v_rclone.get(), self.v_conf.get(), self._write)
-        remote = self.v_remote.get()
-        self._launch(runner, lambda: self._write("Connection OK." if cs.test_connection(runner, remote)
+        remote, base = self.v_remote.get(), self.v_base.get()
+        self._launch(runner, lambda: self._write("Connection OK." if cs.test_connection(runner, remote, base)
                                                  else "Connection FAILED - see the messages above."))
 
     def start(self, mode):
@@ -276,8 +342,11 @@ class CloudSyncDialog(tk.Toplevel):
         stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         backup_root = self.app.backup_dir / "cloud_overwritten" / stamp
 
+        emudeck_layout = base.strip("/ ").lower().endswith("emudeck/saves")
+
         def work():
             ok = failed = 0
+            uploaded = set()
             for p in jobs:
                 if runner.cancelled:
                     break
@@ -296,6 +365,13 @@ class CloudSyncDialog(tk.Toplevel):
                         failed += 1
                     else:
                         ok += 1
+                        if step == "upload":
+                            uploaded.add(cs.emulator_folder(p["sub"]))
+            if uploaded and emudeck_layout and not dry and not runner.cancelled:
+                self._write("\nTelling EmuDeck devices there are new saves (.hash)…")
+                if not cs.bump_emudeck_hash(runner, remote, base, uploaded):
+                    self._write("Could not update .hash - your Deck may not download these "
+                                "changes until EmuDeck uploads from it.")
             tail = "Cancelled. " if runner.cancelled else ""
             self._write(f"\n{tail}Finished{' (preview)' if dry else ''}: {ok} step(s) OK, {failed} failed.")
 
@@ -329,6 +405,22 @@ class CloudSyncDialog(tk.Toplevel):
                     self._set_busy(False)
                     self.runner = None
                     self.app.refresh_all()
+                elif msg[0] == "emudeck":
+                    _tag, conf, user, remote = msg
+                    self.cfg["emudeck_user"] = user
+                    self.v_conf.set(conf)
+                    self._reload_remotes()
+                    if remote:
+                        self.v_remote.set(remote)
+                        self._on_remote()
+                        self._log_now(f"EmuDeck Cloud is set up: using {remote}, folder {self.v_base.get()}."
+                                      " Try 'Sync both ways' with 'Preview only' ticked first.")
+                    else:
+                        self._on_remote()
+                        self._log_now("Both EmuDeck Cloud remotes were added, but it isn't clear which one "
+                                      "your Deck uses. Pick Emudeck-cloud or Emudeck-cloud2 above (EmuDeck's "
+                                      "CloudSync settings on the Deck show it), then 'Test connection'.")
+                    self._save()
                 elif msg[0] == "rclone":
                     self.v_rclone.set(msg[1])
                     self._log_now(f"rclone installed: {msg[1]}")

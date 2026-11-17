@@ -12,16 +12,26 @@ Keep all `.py` files in this folder together and run:
 | `ps2mc.py` | PS2 memory card engine (FAT, ECC, .psu) - no GUI, reusable |
 | `ps2folder.py` | PCSX2 *folder* memory card engine (same interface as `ps2mc`) - no GUI |
 | `ui_ps2cards.py` | PS2 Card Manager window |
-| `cloudsync.py` | rclone wrapper using EmuDeck's folder layout - no GUI |
+| `cloudsync.py` | rclone wrapper using EmuDeck's folder layout, incl. EmuDeck Cloud - no GUI |
 | `ui_cloud.py` | Cloud Sync window |
 
-## PC <-> Steam Deck via OneDrive
-Cloud layout (same as EmuDeck CloudSync): `<remote>:EmuDeck/saves/<emulator>/{saves,states}`.
-1. Steam Deck: enable CloudSync with OneDrive in EmuDeck.
-2. PC: open **Cloud Sync...**, get rclone (Download rclone), **Set up OneDrive...**, pick the remote.
-3. Run **Sync both ways** (tick *Preview only* first to see what would happen).
+## PC <-> Steam Deck: EmuDeck Cloud or OneDrive
+Cloud layout is the same as EmuDeck CloudSync: `<remote>:<base>/<emulator>/{saves,states}`.
+
+**EmuDeck Cloud** (EmuDeck's own Patreon storage)
+1. On the Deck, CloudSync must already be set up with EmuDeck Cloud.
+2. PC: open **Cloud Sync...**, get rclone (Download rclone), click **Set up EmuDeck Cloud...** and paste
+   your EmuDeck token (`Emulation/saves/.token` on the Deck; it looks like `12345---abc...`).
+   Like EmuDeck, the app sends it to `cloud.emudeck.com` to get storage keys, saves those as the rclone
+   remotes `Emudeck-cloud` (Backblaze B2) and `Emudeck-cloud2` (Wasabi), picks the one that holds your
+   Deck's saves and fills in the base folder (`cs<id>/Emudeck/saves`). The token itself is not stored.
+3. Run **Sync both ways** (tick *Preview only* first). After an upload a new `.hash` is written so the
+   Deck's CloudSync notices the change and downloads it.
+
+**OneDrive**: on the PC use **Set up OneDrive...**, pick the remote, base `EmuDeck/saves`.
 
 Newer file wins, nothing is deleted. Overwritten local files go to `<backup folder>/cloud_overwritten/`.
+EmuDeck's bookkeeping files (`.hash`, `.token`, `.last_upload`...) are never copied.
 Tip: use PCSX2 *folder* memory cards (Settings > Memory Cards > Convert) so each game's save is its own
 file; whole-card `.ps2` files can't be merged if two devices change the same card between syncs.
 
