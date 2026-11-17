@@ -253,15 +253,45 @@ def list_remotes(conf_path: str):
     return [(name, cp[name].get("type", "")) for name in cp.sections()]
 
 
+_CRED_KEYS = {
+    "onedrive": ("token",), "drive": ("token",), "dropbox": ("token",), "box": ("token",),
+    "pcloud": ("token",), "b2": ("account", "key"), "s3": ("access_key_id", "secret_access_key"),
+    "webdav": ("url",), "sftp": ("host",), "smb": ("host",),
+}
+
+
+def remote_info(conf_path: str):
+    """[(name, type, ready)] - ready = has the sign-in / keys it needs.  EmuDeck's
+    rclone.conf ships a template section for every provider, most of them empty."""
+    if not conf_path or not Path(conf_path).is_file():
+        return []
+    cp = configparser.ConfigParser(interpolation=None, strict=False)
+    try:
+        cp.read(conf_path, encoding="utf-8")
+    except (configparser.Error, UnicodeDecodeError, OSError):
+        return []
+    out = []
+    for name in cp.sections():
+        sec = cp[name]
+        rtype = sec.get("type", "")
+        keys = _CRED_KEYS.get(rtype)
+        ready = all(sec.get(k, "").strip() for k in keys) if keys else bool(rtype)
+        out.append((name, rtype, ready))
+    return out
+
+
 def pick_default_remote(remotes) -> str:
-    for n, _t in remotes:
+    """Prefer a signed-in OneDrive, then EmuDeck Cloud with keys, then anything signed in.
+    remotes: [(name, type)] or [(name, type, ready)]."""
+    items = [(r[0], r[1], r[2] if len(r) > 2 else True) for r in remotes]
+    ready = [(n, t) for n, t, ok in items if ok]
+    for n, t in ready:
+        if t == "onedrive":
+            return n
+    for n, _t in ready:
         if n in EMUDECK_CLOUD_VARIANTS:
             return n
-    onedrive = [n for n, t in remotes if t == "onedrive"]
-    for n in onedrive:
-        if n.lower().startswith("emudeck"):
-            return n
-    return onedrive[0] if onedrive else ""
+    return ready[0][0] if ready else ""
 
 
 def remote_path(remote: str, base: str, sub: str) -> str:
@@ -409,6 +439,27 @@ def emudeck_cloud_type(token: str, url: str = EMUDECK_CLOUD_LOGIN_URL, timeout=2
     if not cloud:
         return None
     return "Emudeck-cloud" if str(cloud) == "cloud1" else "Emudeck-cloud2"
+
+
+def discover_emudeck_cloud_user(runner: "RcloneRunner", remote: str) -> str:
+    """The account id for an EmuDeck Cloud remote whose keys are set but whose folder is
+    unknown.  Backblaze names the allowed bucket (cs<id>) when the key is used anywhere
+    else: 'you must use bucket(s) [{"<bucket id>" "cs1234"}] with this application key'."""
+    rc, out = runner.capture(["lsf", f"{remote}:", "--max-depth", "1"])
+    m = re.search(r'bucket\(s\)\s*\[\{"[^"]*"\s+"cs([A-Za-z0-9_-]+)"\}', out)
+    if m:
+        return m.group(1)
+    if rc == 0:                                  # listing worked: a cs<id> folder or bucket
+        for line in out.splitlines():
+            m = re.match(r"cs([A-Za-z0-9_-]+)/?$", line.strip())
+            if m:
+                return m.group(1)
+    return ""
+
+
+def emudeck_cloud_base_ok(remote: str, base: str) -> bool:
+    b = base.strip("/ ")
+    return not is_emudeck_cloud(remote) or b.startswith("cs") or b.startswith("emudeck-saves/cs")
 
 
 def emudeck_cloud_base(remote: str, user: str) -> str:
