@@ -29,6 +29,7 @@ import io
 import json
 import os
 import platform
+import re
 import shlex
 import shutil
 import subprocess
@@ -100,9 +101,13 @@ def default_subpath(emulator: str, label: str) -> str:
 def emudeck_roots():
     """Existing 'Emulation' folders where EmuDeck keeps saves and tools."""
     home = Path.home()
-    cands = [home / "Emulation", home / "EmuDeck" / "Emulation"]
+    cands = []
+    ep = emudeck_settings().get("emulationPath")
+    if ep:
+        cands.append(Path(ep))
+    cands += [home / "Emulation", home / "EmuDeck" / "Emulation"]
     if IS_WIN:
-        for letter in "CDEFGH":
+        for letter in "CDEFGHIJKLMNOPQRSTUVWXYZB":
             cands.append(Path(f"{letter}:/Emulation"))
     else:
         cands.append(Path("/run/media/mmcblk0p1/Emulation"))
@@ -125,6 +130,71 @@ def emudeck_roots():
                 out.append(c)
         except OSError:
             pass
+    return out
+
+
+def emudeck_appdata() -> Path:
+    """EmuDeck's own data folder (its Electron app data and settings file)."""
+    if IS_WIN:
+        return Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming")) / "EmuDeck"
+    return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "EmuDeck"
+
+
+def emudeck_settings() -> dict:
+    """A few values from EmuDeck's settings file (settings.ps1 on Windows, settings.sh on Linux)."""
+    out = {}
+    cands = [emudeck_appdata() / "settings.ps1", emudeck_appdata() / "settings.sh",
+             Path.home() / "EmuDeck" / "settings.ps1",
+             Path.home() / ".config" / "EmuDeck" / "settings.sh", Path.home() / "emudeck" / "settings.sh"]
+    for f in cands:
+        try:
+            text = f.read_text(encoding="utf-8-sig", errors="replace")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            m = re.match(r'^\s*\$?(emulationPath|savesPath|toolsPath|cloud_sync_provider|cs_user)\s*=\s*"?([^"]*)"?\s*$',
+                         line)
+            if m and m.group(2) and m.group(1) not in out:
+                out[m.group(1)] = m.group(2)
+        if out:
+            break
+    return out
+
+
+_FULL_TOKEN = re.compile(rb"([A-Za-z0-9_\-]{3,32})\|\|\|([A-Za-z0-9_\-]{20,128})")
+
+
+def find_emudeck_signins():
+    """Full EmuDeck Cloud tokens ('<account id>|||<secret>') that the EmuDeck app on this
+    computer has stored after a Patreon sign-in, newest first.  EmuDeck keeps it in its
+    Chromium 'Local Storage' under the key 'patreon_token'."""
+    folder = emudeck_appdata() / "Local Storage" / "leveldb"
+    found = []
+    try:
+        files = sorted(folder.iterdir(), key=lambda f: f.stat().st_mtime)
+    except OSError:
+        return []
+    for f in files:
+        if f.suffix.lower() not in (".log", ".ldb"):
+            continue
+        try:
+            data = f.read_bytes()
+        except OSError:
+            continue
+        for utf16, blob in ((False, data), (True, data.replace(b"\x00", b""))):
+            for m in re.finditer(rb"patreon_token", blob):
+                t = _FULL_TOKEN.search(blob, m.end(), m.end() + 400)
+                if not t:
+                    continue
+                tok = t.group(0).decode("ascii")
+                # values may be stored as UTF-16; only trust such a match if it really is
+                if utf16 and tok.encode("utf-16-le") not in data:
+                    continue
+                found.append(tok)
+    out = []
+    for tok in reversed(found):                 # newest file / latest write first
+        if tok not in out:
+            out.append(tok)
     return out
 
 
@@ -285,10 +355,38 @@ def parse_token(token: str):
     t = (token or "").strip().strip('"').strip()
     t = t.replace("---", "|||")
     user = t.split("|", 1)[0].strip()
+    if t and "|||" not in t and re.fullmatch(r"[A-Za-z0-9_\-]{20,}", t):
+        raise EmuDeckCloudError(
+            "This is the short Patreon login token (from the .token file). EmuDeck Cloud needs the "
+            "full token, which also contains your account ID (it looks like  ABCD1234|||<secret> ).\n\n"
+            "Easiest: sign in to Patreon in the EmuDeck app on this computer, then use "
+            "'Set up EmuDeck Cloud…' again and let it use that sign-in.")
     if not user or "|||" not in t or any(c.isspace() for c in t):
-        raise EmuDeckCloudError("That doesn't look like an EmuDeck token. It should look like "
-                                "<number>---<letters and numbers>.")
+        raise EmuDeckCloudError("That doesn't look like an EmuDeck Cloud token. It should look like "
+                                "<account id>|||<secret>  (or with --- instead of |||).")
     return t, user
+
+
+EMUDECK_CLOUD_LOGIN_URL = "https://cloud.emudeck.com/login.php"
+
+
+def emudeck_cloud_type(token: str, url: str = EMUDECK_CLOUD_LOGIN_URL, timeout=20):
+    """Ask EmuDeck which cloud this account uses, like the EmuDeck app does:
+    'cloud1' -> Emudeck-cloud (B2), anything else -> Emudeck-cloud2 (Wasabi).
+    Returns the remote name, or None if the question could not be answered."""
+    api_token, _user = parse_token(token)
+    req = urllib.request.Request(url, data=json.dumps({"token": api_token}).encode(), method="POST",
+                                 headers={"Content-Type": "text/plain;charset=UTF-8",
+                                          "User-Agent": HTTP_HEADERS["User-Agent"]})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            data = json.loads(r.read().decode("utf-8", "replace"))
+    except Exception:  # noqa - optional: detection falls back to looking for the saves
+        return None
+    cloud = data.get("cloud") if isinstance(data, dict) else None
+    if not cloud:
+        return None
+    return "Emudeck-cloud" if str(cloud) == "cloud1" else "Emudeck-cloud2"
 
 
 def emudeck_cloud_base(remote: str, user: str) -> str:
@@ -302,7 +400,7 @@ def register_emudeck_cloud(token: str, url: str = EMUDECK_CLOUD_REGISTER_URL, ti
     body = json.dumps({"token": api_token}).encode()
     req = urllib.request.Request(url, data=body, method="POST",
                                  headers={"Content-Type": "application/json",
-                                          "User-Agent": "EmuSaveManager"})
+                                          "User-Agent": HTTP_HEADERS["User-Agent"]})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             raw = r.read().decode("utf-8", "replace")
@@ -365,6 +463,10 @@ def detect_emudeck_cloud(runner: RcloneRunner, bases: dict, hint=None):
     with_saves = [n for n, r in report.items() if r == "has-saves"]
     if len(with_saves) == 1:
         return with_saves[0], report
+    if hint in bases and not with_saves and report.get(hint) == "empty":
+        return hint, report
+    if hint in bases and hint in with_saves:
+        return hint, report
     hint = str(hint or "").lower()
     if not with_saves:
         working = [n for n, r in report.items() if r == "empty"]

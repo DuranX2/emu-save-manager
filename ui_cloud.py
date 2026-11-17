@@ -208,35 +208,64 @@ class CloudSyncDialog(tk.Toplevel):
         if not exe or not Path(exe).is_file():
             messagebox.showinfo("rclone", "Find or download rclone first.", parent=self)
             return
-        token = simpledialog.askstring(
-            "Set up EmuDeck Cloud",
-            "Paste your EmuDeck token (it looks like 12345---abcdef…).\n\n"
-            "EmuDeck keeps it in the file  Emulation/saves/.token  on a device where you signed in\n"
-            "to EmuDeck Cloud (on the Steam Deck: open it in Dolphin with hidden files shown).\n\n"
-            "It is sent only to cloud.emudeck.com, just as EmuDeck does, to get your storage keys.\n"
-            "The token itself is not saved.", show="•", parent=self)
-        if not token or not token.strip():
-            return
-        try:
-            cs.parse_token(token)
-        except cs.EmuDeckCloudError as ex:
-            messagebox.showerror("EmuDeck Cloud", str(ex), parent=self)
-            return
+        tokens = []
+        signins = cs.find_emudeck_signins()
+        if signins:
+            ans = messagebox.askyesnocancel(
+                "Set up EmuDeck Cloud",
+                "Found your EmuDeck Patreon sign-in on this computer.\n\n"
+                "Use it to connect to EmuDeck Cloud?\n\n"
+                "Yes = use it    No = paste a token instead", parent=self)
+            if ans is None:
+                return
+            if ans:
+                tokens = signins
+        if not tokens:
+            token = simpledialog.askstring(
+                "Set up EmuDeck Cloud",
+                "Paste your full EmuDeck Cloud token (it looks like  ABCD1234|||<secret> ).\n\n"
+                "Easiest instead: open the EmuDeck app on this computer and sign in to Patreon,\n"
+                "then click 'Set up EmuDeck Cloud…' again - the sign-in is then found automatically.\n\n"
+                "The token is sent only to cloud.emudeck.com, just as EmuDeck does, to get your\n"
+                "storage keys. It is not saved.", show="•", parent=self)
+            if not token or not token.strip():
+                return
+            try:
+                cs.parse_token(token)
+            except cs.EmuDeckCloudError as ex:
+                messagebox.showerror("EmuDeck Cloud", str(ex), parent=self)
+                return
+            tokens = [token]
         conf = self.v_conf.get() or str(cs.default_rclone_conf())
         runner = cs.RcloneRunner(exe, conf, self._write)
         self._write("Contacting cloud.emudeck.com…")
 
         def work():
-            keys = cs.register_emudeck_cloud(token)
+            keys, last_error, used = None, None, None
+            for tok in tokens:
+                try:
+                    keys = cs.register_emudeck_cloud(tok)
+                    used = tok
+                    break
+                except cs.EmuDeckCloudError as ex:
+                    last_error = ex
+            if keys is None:
+                if len(tokens) > 1 or signins:
+                    raise cs.EmuDeckCloudError(f"{last_error}\nIf you signed in to EmuDeck a while ago, "
+                                               "open EmuDeck once so it refreshes the sign-in, then try again.")
+                raise last_error
+            hint = cs.emudeck_cloud_type(used)
+            if hint:
+                self._write(f"EmuDeck says this account uses {cs.EMUDECK_CLOUD_VARIANTS[hint]['label']}.")
             bases = cs.write_emudeck_cloud_remotes(conf, keys)
             self._write(f"Storage keys saved to {conf} (remotes Emudeck-cloud and Emudeck-cloud2).")
             self._write("Looking for your saves in EmuDeck Cloud…")
-            remote, report = cs.detect_emudeck_cloud(runner, bases, keys.get("cloud"))
+            remote, report = cs.detect_emudeck_cloud(runner, bases, hint or keys.get("cloud"))
             for name, state in report.items():
                 self._write(f"  {cs.EMUDECK_CLOUD_VARIANTS[name]['label']}: "
                             + {"has-saves": "your saves are here", "empty": "reachable, no saves yet"}
                             .get(state, state))
-            self.q.put(("emudeck", conf, keys["user"], remote))
+            self.q.put(("emudeck", conf, keys["user"], remote or hint))
 
         self._launch(runner, work)
 
