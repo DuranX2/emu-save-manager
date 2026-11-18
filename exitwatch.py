@@ -48,7 +48,9 @@ def snapshot() -> dict:
 def pretty(name: str) -> str:
     n = name.lower()
     for key, label in (("pcsx2", "PCSX2"), ("duckstation", "DuckStation"), ("retroarch", "RetroArch"),
-                       ("xemu", "xemu"), ("dolphin", "Dolphin"), ("es-de", "ES-DE"),
+                       ("xemu", "xemu"), ("dolphin", "Dolphin"), ("yuzu", "Yuzu"), ("azahar", "Azahar"),
+                       ("melonds", "melonDS"), ("ppsspp", "PPSSPP"), ("rpcs3", "RPCS3"),
+                       ("xenia", "Xenia"), ("es-de", "ES-DE"),
                        ("emulationstatio", "ES-DE")):
         if n.startswith(key):
             return label

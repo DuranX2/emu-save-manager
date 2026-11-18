@@ -306,6 +306,12 @@ def sync_job(runner, job: dict, rpath: str, mode: str, dry: bool, local_backup, 
         log("Couldn't list the cloud folder - skipped this time.")
         return res
     local = local_listing(local_dir)
+    skip = {d.lower() for d in job.get("exclude") or ()}
+    if skip:                                       # sub-folders that aren't saves (e.g. Xenia DLC)
+        def keep(rel):
+            return not any(part.lower() in skip for part in rel.split("/")[:-1])
+        local = {r: v for r, v in local.items() if keep(r)}
+        remote = {r: v for r, v in remote.items() if keep(r)}
     if not remote and mode == "download":
         res.update(ok=True, nothing_in_cloud=True)
         return res

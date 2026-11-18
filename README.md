@@ -8,7 +8,7 @@ Keep all `.py` files in this folder together and run:
 
 | File | Purpose |
 |---|---|
-| `emu_save_manager.py` | Main window: backup / restore for PCSX2, Xemu, DuckStation, RetroArch, Dolphin, custom |
+| `emu_save_manager.py` | Main window: backup / restore for PCSX2, Xemu, DuckStation, Dolphin, RetroArch, Yuzu, Azahar, melonDS, PPSSPP, RPCS3, Xenia, custom |
 | `ps2mc.py` | PS2 memory card engine (FAT, ECC, .psu) - no GUI, reusable |
 | `ps2folder.py` | PCSX2 *folder* memory card engine (same interface as `ps2mc`) - no GUI |
 | `ui_ps2cards.py` | PS2 Card Manager window |
@@ -40,6 +40,14 @@ Install the app on both (Windows: `EmuSaveManager-Setup.exe`; Steam Deck: see *B
    a systemd user service on the Steam Deck - and syncs about 15 seconds after the program closes
    (waiting for any other emulator to close first). On the Deck, "ES-DE closes" means quitting
    EmulationStation in Game Mode; on the PC, "an emulator closes" covers emulators started any way.
+
+Supported emulators and the EmuDeck cloud folders they sync to: PCSX2 (`pcsx2/saves`, `pcsx2/states`),
+DuckStation (`duckstation/…`), Dolphin (`dolphin/GC`, `dolphin/Wii`, `dolphin/states`), RetroArch
+(`retroarch/…`), Xemu (`xemu`, off by default), Yuzu (`yuzu/saves`, `yuzu/profiles`), Azahar
+(`azahar/saves` = its SD card folder, `azahar/states`), melonDS (`melonds/…`), PPSSPP (`ppsspp/saves`,
+`ppsspp/states`), RPCS3 (`rpcs3/saves`, `rpcs3/trophy`) and Xenia (`xenia/saves`, its content folder
+without DLC, title updates and installed games). With EmuDeck these are the `Emulation/saves/<emulator>/`
+folders on both Windows and the Steam Deck, so both devices meet in the same cloud folders.
 
 How changes are decided: after every sync the app remembers what each item looked like on both sides
 (`~/.emu_save_manager/sync_state/`). Next time, the side that **changed** wins, even if its date is older.
