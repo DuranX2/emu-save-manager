@@ -162,8 +162,9 @@ class CloudSyncDialog(tk.Toplevel):
             self._reload_remotes()
 
     def _autodetect(self):
-        if not self.v_rclone.get() or not Path(self.v_rclone.get()).is_file():
-            self.v_rclone.set(cs.find_rclone(self.v_rclone.get()))
+        cur = self.v_rclone.get()
+        if not cur or not Path(cur).is_file() or not cs.rclone_ok(cur):
+            self.v_rclone.set(cs.find_rclone(cur))
         if not self.v_conf.get() or not Path(self.v_conf.get()).is_file():
             self.v_conf.set(cs.find_config(self.v_conf.get()))
         self._reload_remotes()
@@ -351,7 +352,7 @@ class CloudSyncDialog(tk.Toplevel):
             self._save()
             return
         if self.v_auto.get():
-            if not self._ready():
+            if not self._ready(background=True):
                 self.v_auto.set(False)
                 return
             self._save()
@@ -376,7 +377,7 @@ class CloudSyncDialog(tk.Toplevel):
     def toggle_exit(self):
         opts = {"emulators": self.v_exit_emu.get(), "frontend": self.v_exit_fe.get()}
         old = dict(self.cfg.get("exit_sync") or {})
-        if any(opts.values()) and not self._ready():
+        if any(opts.values()) and not self._ready(background=True):
             self.v_exit_emu.set(bool(old.get("emulators")))
             self.v_exit_fe.set(bool(old.get("frontend")))
             return
@@ -456,8 +457,20 @@ class CloudSyncDialog(tk.Toplevel):
         self.app.save_cfg()
 
     # ---- running ------------------------------------------------------------------------------
-    def _ready(self):
+    def _ready(self, background=False):
+        """background: for automatic sync, which fetches a current rclone by itself."""
         exe, remote = self.v_rclone.get(), self.v_remote.get()
+        if (not background and exe and Path(exe).is_file() and not cs.rclone_ok(exe)
+                and cs.needs_new_rclone(self.v_conf.get(), remote)):
+            better = cs.find_rclone(exe)
+            if cs.rclone_ok(better):
+                self.v_rclone.set(better)
+                exe = better
+                self._log_now(f"Using the newer rclone at {better}.")
+            else:
+                messagebox.showinfo("Cloud Sync", "This rclone is too old to upload to OneDrive (it needs "
+                                    "1.66 or newer). Use 'Download rclone' first.", parent=self)
+                return False
         if not exe or not Path(exe).is_file():
             messagebox.showinfo("Cloud Sync", "rclone was not found. Use 'Download rclone' or Browse to it.", parent=self)
             return False

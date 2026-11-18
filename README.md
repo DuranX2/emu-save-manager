@@ -52,6 +52,8 @@ Command line (what the scheduler runs): `EmuSaveManager --sync` (add `--dry-run`
 
 On the Steam Deck the app finds EmuDeck's `Emulation/saves/<emulator>/...` folders automatically.
 
+**rclone 1.66 or newer for OneDrive.** Older rclone (EmuDeck shipped 1.60 on the Steam Deck) can list and download from OneDrive but every upload fails with "unauthenticated" - only empty files get through. For a OneDrive remote the app uses a new-enough rclone found on the device, or downloads the current one into `~/.emu_save_manager/rclone`, leaving EmuDeck's copy alone.
+
 **Empty files never replace real ones.** If the copy on one side is empty (0 bytes) and the other side's file has content, the sync keeps the real one and says so in the log, whichever date is newer. New empty files (some games use them) still sync.
 
 ## Save History

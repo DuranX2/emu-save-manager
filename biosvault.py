@@ -284,7 +284,8 @@ def sync_cloud(cfg: dict, log=print, dry=False, runner=None) -> bool:
     """Two-way copy of the vault with '<remote>:Emulator BIOS Vault'.  Newest wins,
     nothing deleted; files a download replaces go to <backup>/bios_vault_overwritten/."""
     c = cfg.get("cloud", {})
-    exe = c.get("rclone") or cs.find_rclone()
+    exe = (runner.exe if runner else cs.usable_rclone(c.get("rclone", ""), log, conf=c.get("config", ""),
+                                                           remote=c.get("remote", ""))) if c.get("remote") else ""
     remote = c.get("remote", "")
     if not exe or not Path(exe).is_file() or not remote:
         log("Cloud Sync is not set up, so the vault stays on this device only.")
