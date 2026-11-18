@@ -16,9 +16,9 @@ if defined QUICK (
 )
 if not defined APP_VER set APP_VER=0.0.0
 py -3 packaging\make_version_info.py %APP_VER% build\version_info.txt || goto :err
-py -3 -m PyInstaller --noconfirm --clean --windowed --noupx --name EmuSaveManager --version-file build\version_info.txt ^
+py -3 -m PyInstaller --noconfirm --clean --windowed --noupx --name EmuSaveManager --version-file build\version_info.txt --icon packaging\art\emu-save-manager.ico --add-data "packaging\art;art" ^
   --hidden-import ps2mc --hidden-import ps2folder --hidden-import cloudsync --hidden-import autosync --hidden-import exitwatch --hidden-import biosdb --hidden-import biosdb_data --hidden-import biosvault --hidden-import biostargets --hidden-import ui_biosvault ^
-  --hidden-import ui_ps2cards --hidden-import ui_cloud --hidden-import savehistory --hidden-import ui_history --hidden-import syncplan ^
+  --hidden-import ui_ps2cards --hidden-import ui_cloud --hidden-import savehistory --hidden-import ui_history --hidden-import syncplan --hidden-import steamshortcut ^
   emu_save_manager.py || goto :err
 
 set ISCC=

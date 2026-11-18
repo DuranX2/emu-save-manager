@@ -37,9 +37,16 @@ jobs:
         run: >
           pyinstaller --noconfirm --clean --windowed --noupx --name EmuSaveManager
           --version-file build/version_info.txt
+          --icon packaging/art/emu-save-manager.ico --add-data "packaging/art;art"
           --hidden-import ps2mc --hidden-import ps2folder --hidden-import cloudsync --hidden-import autosync --hidden-import exitwatch --hidden-import biosdb --hidden-import biosdb_data --hidden-import biosvault --hidden-import biostargets --hidden-import ui_biosvault
-          --hidden-import ui_ps2cards --hidden-import ui_cloud --hidden-import savehistory --hidden-import ui_history --hidden-import syncplan
+          --hidden-import ui_ps2cards --hidden-import ui_cloud --hidden-import savehistory --hidden-import ui_history --hidden-import syncplan --hidden-import steamshortcut
           emu_save_manager.py
+      - name: Check the icon and artwork are bundled
+        run: |
+          foreach ($f in "capsule.png","hero.png","icon-256.png") {
+            if (-not (Test-Path "dist\EmuSaveManager\_internal\art\$f")) { throw "Missing artwork: $f" }
+          }
+          Write-Host "Artwork bundled:" (Get-ChildItem dist\EmuSaveManager\_internal\art -Name)
       - name: Build installer
         run: |
           choco install innosetup -y --no-progress

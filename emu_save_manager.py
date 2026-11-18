@@ -18,6 +18,8 @@ save data for PCSX2, Xemu, DuckStation and RetroArch, plus custom emulators.
 Run:  python emu_save_manager.py          (Python 3.8+; keep the other .py files beside it)
       python emu_save_manager.py --sync   one two-way sync without the window
       python emu_save_manager.py --watch  sync after an emulator / ES-DE closes (started by the app)
+      EmuSaveManager --add-to-steam      Linux / Steam Deck: put it in the Steam library (Game Mode)
+                                         with artwork; --remove-from-steam takes it out again
 """
 
 import copy
@@ -531,11 +533,29 @@ class LocationsDialog(tk.Toplevel):
 # Main application
 # --------------------------------------------------------------------------
 class App(tk.Tk):
+    def _set_icon(self):
+        """Window and taskbar icon for this window and every dialog it opens."""
+        try:
+            import steamshortcut
+            art = steamshortcut.art_dir()
+            self._icons = [tk.PhotoImage(file=str(art / f"icon-{n}.png")) for n in (256, 64, 32, 16)
+                           if (art / f"icon-{n}.png").is_file()]
+            if self._icons:
+                self.iconphoto(True, *self._icons)
+        except Exception:  # noqa - an icon must never stop the app
+            pass
+
     def __init__(self):
         super().__init__()
         self.title(APP_NAME)
         self.geometry("1120x700")
         self.minsize(920, 580)
+        self._set_icon()
+        if SYSTEM == "Linux" and self.winfo_screenheight() < 900:    # Steam Deck: use the screen
+            try:
+                self.attributes("-zoomed", True)
+            except tk.TclError:
+                pass
 
         self.cfg = load_config()
         self.profiles = self.build_profiles()
@@ -1016,6 +1036,10 @@ if __name__ == "__main__":
     if "--watch" in sys.argv:           # sync after an emulator / ES-DE closes, no window
         import exitwatch
         sys.exit(exitwatch.watch())
+    if "--add-to-steam" in sys.argv or "--remove-from-steam" in sys.argv:   # Steam Deck Game Mode
+        import steamshortcut
+        sys.exit(steamshortcut.cli("add" if "--add-to-steam" in sys.argv else "remove",
+                                   assume_yes="--yes" in sys.argv))
     if "--bios-scan" in sys.argv:       # identify BIOS files in a folder, change nothing
         import biosvault
         folder = sys.argv[sys.argv.index("--bios-scan") + 1:] or ["."]
