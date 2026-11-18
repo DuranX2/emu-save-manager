@@ -58,6 +58,17 @@ EMUDECK_SUBPATHS = {
     ("Dolphin", "Wii Saves"): "dolphin/Wii",
     ("Dolphin", "Save States"): "dolphin/states",
     ("Xemu", "HDD and EEPROM"): "xemu",
+    ("Yuzu", "Saves"): "yuzu/saves",
+    ("Yuzu", "Profiles"): "yuzu/profiles",
+    ("Azahar", "Saves"): "azahar/saves",
+    ("Azahar", "Save States"): "azahar/states",
+    ("melonDS", "Saves"): "melonds/saves",
+    ("melonDS", "Save States"): "melonds/states",
+    ("PPSSPP", "Saves"): "ppsspp/saves",
+    ("PPSSPP", "Save States"): "ppsspp/states",
+    ("RPCS3", "Saves"): "rpcs3/saves",
+    ("RPCS3", "Trophies"): "rpcs3/trophy",
+    ("Xenia", "Saves"): "xenia/saves",
 }
 # Cloud folders earlier versions used by mistake; a saved setting equal to one of these
 # means "the default" (1.0.0 used dolphin/StateSaves, but EmuDeck keeps dolphin/states).

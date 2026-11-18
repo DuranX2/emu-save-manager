@@ -51,7 +51,8 @@ INTERVALS = (5, 10, 15, 30, 60, 120)
 # Process names (lower case) that mean "an emulator is running - don't sync now".
 # Linux names are what /proc/<pid>/comm shows (max 15 characters).  Note: plain
 # "dolphin" on Linux is KDE's file manager, so only "dolphin-emu*" counts there.
-EMULATOR_PREFIXES = ("pcsx2", "duckstation", "retroarch", "xemu", "dolphin-emu")
+EMULATOR_PREFIXES = ("pcsx2", "duckstation", "retroarch", "xemu", "dolphin-emu",
+                     "yuzu", "azahar", "melonds", "ppsspp", "rpcs3", "xenia")
 WINDOWS_EXTRA = ("dolphin.exe",)
 
 
@@ -377,7 +378,8 @@ def build_jobs(cfg: dict, profiles: dict, resolve):
             local = resolved.get(label)
             if enabled and local and Path(local).is_dir():
                 jobs.append({"emu": emu, "label": label, "local": Path(local),
-                             "sub": cs.effective_subpath(emu, label, saved.get("sub"))})
+                             "sub": cs.effective_subpath(emu, label, saved.get("sub")),
+                             "exclude": list(loc.get("exclude_dirs", ()))})
     return jobs
 
 

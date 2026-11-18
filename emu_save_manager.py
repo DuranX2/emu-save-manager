@@ -67,13 +67,21 @@ def builtin_profiles():
                         mac / "Dolphin",
                         flat / "org.DolphinEmu.dolphin-emu" / "data" / "dolphin-emu"])
 
-    def loc(label, cands, patterns=("*",), recursive=True):
-        return {
+    def loc(label, cands, patterns=("*",), recursive=True, exclude_dirs=()):
+        d = {
             "label": label,
             "candidates": [str(c) for c in cands],
             "patterns": list(patterns),
             "recursive": recursive,
         }
+        if exclude_dirs:
+            d["exclude_dirs"] = list(exclude_dirs)    # sub-folders that aren't saves (skipped everywhere)
+        return d
+
+    emudeck_emus = appdata / "EmuDeck" / "Emulators"
+    # Xbox 360 content types inside Xenia's content/<profile or 0...0>/<title id>/ folders that are
+    # downloads, not saves: DLC, title updates, installed/on-demand/arcade/demo games.
+    XENIA_NOT_SAVES = ("00000002", "000B0000", "00004000", "00007000", "000D0000", "00080000")
 
     return _with_emudeck_folders({
         "PCSX2": {
@@ -133,6 +141,97 @@ def builtin_profiles():
                     + [emudeck_dolphin / "StateSaves"]),
             ],
         },
+        "Yuzu": {
+            "prefer_emudeck": True,
+            "notes": "Nintendo Switch. Game saves (the NAND user save folder) and user profile "
+                     "pictures. Close Yuzu before restoring.",
+            "locations": [
+                loc("Saves",
+                    [appdata / "yuzu" / "nand" / "user" / "save",
+                     emudeck_emus / "yuzu" / "yuzu-windows-msvc" / "user" / "nand" / "user" / "save",
+                     data / "yuzu" / "nand" / "user" / "save",
+                     HOME / "Emulation" / "storage" / "yuzu" / "nand" / "user" / "save",
+                     flat / "org.yuzu_emu.yuzu" / "data" / "yuzu" / "nand" / "user" / "save"]),
+                loc("Profiles",
+                    [appdata / "yuzu" / "nand" / "system" / "save" / "8000000000000010" / "su" / "avators",
+                     data / "yuzu" / "nand" / "system" / "save" / "8000000000000010" / "su" / "avators"]),
+            ],
+        },
+        "Azahar": {
+            "prefer_emudeck": True,
+            "notes": "Nintendo 3DS (Citra's successor). The SD card folder (game saves and extra "
+                     "data) and save states. Close Azahar before restoring.",
+            "locations": [
+                loc("Saves",
+                    [appdata / "Azahar" / "sdmc",
+                     emudeck_emus / "azahar" / "user" / "sdmc",
+                     data / "azahar-emu" / "sdmc",
+                     HOME / "Emulation" / "storage" / "azahar" / "sdmc",
+                     flat / "io.github.azahar.Azahar" / "data" / "azahar-emu" / "sdmc"]),
+                loc("Save States",
+                    [appdata / "Azahar" / "states",
+                     emudeck_emus / "azahar" / "user" / "states",
+                     data / "azahar-emu" / "states",
+                     flat / "io.github.azahar.Azahar" / "data" / "azahar-emu" / "states"]),
+            ],
+        },
+        "melonDS": {
+            "prefer_emudeck": True,
+            "notes": "Nintendo DS. Game saves (.sav) and save states. melonDS keeps saves next to "
+                     "the ROM unless a save folder is set (EmuDeck sets Emulation/saves/melonds); "
+                     "otherwise use 'Locations…'. Close melonDS before restoring.",
+            "locations": [
+                loc("Saves", [config / "melonDS" / "saves",
+                              flat / "net.kuribo64.melonDS" / "data" / "melonDS" / "saves"]),
+                loc("Save States", [config / "melonDS" / "states",
+                                    flat / "net.kuribo64.melonDS" / "data" / "melonDS" / "states"]),
+            ],
+        },
+        "PPSSPP": {
+            "prefer_emudeck": True,
+            "notes": "PlayStation Portable. Game saves (PSP/SAVEDATA) and save states "
+                     "(PSP/PPSSPP_STATE). Close PPSSPP before restoring.",
+            "locations": [
+                loc("Saves",
+                    [d / "PPSSPP" / "PSP" / "SAVEDATA" for d in docs]
+                    + [emudeck_emus / "PPSSPP" / "memstick" / "PSP" / "SAVEDATA",
+                       config / "ppsspp" / "PSP" / "SAVEDATA",
+                       flat / "org.ppsspp.PPSSPP" / "config" / "ppsspp" / "PSP" / "SAVEDATA"]),
+                loc("Save States",
+                    [d / "PPSSPP" / "PSP" / "PPSSPP_STATE" for d in docs]
+                    + [emudeck_emus / "PPSSPP" / "memstick" / "PSP" / "PPSSPP_STATE",
+                       config / "ppsspp" / "PSP" / "PPSSPP_STATE",
+                       flat / "org.ppsspp.PPSSPP" / "config" / "ppsspp" / "PSP" / "PPSSPP_STATE"]),
+            ],
+        },
+        "RPCS3": {
+            "prefer_emudeck": True,
+            "notes": "PlayStation 3. Game saves (dev_hdd0/home/00000001/savedata) and trophies. "
+                     "Portable install? Use 'Locations…'. Close RPCS3 before restoring.",
+            "locations": [
+                loc("Saves",
+                    [config / "rpcs3" / "dev_hdd0" / "home" / "00000001" / "savedata",
+                     HOME / "Emulation" / "storage" / "rpcs3" / "dev_hdd0" / "home" / "00000001" / "savedata",
+                     flat / "net.rpcs3.RPCS3" / "config" / "rpcs3" / "dev_hdd0" / "home" / "00000001" / "savedata",
+                     appdata / "rpcs3" / "dev_hdd0" / "home" / "00000001" / "savedata"]),
+                loc("Trophies",
+                    [config / "rpcs3" / "dev_hdd0" / "home" / "00000001" / "trophy",
+                     HOME / "Emulation" / "storage" / "rpcs3" / "dev_hdd0" / "home" / "00000001" / "trophy",
+                     flat / "net.rpcs3.RPCS3" / "config" / "rpcs3" / "dev_hdd0" / "home" / "00000001" / "trophy"]),
+            ],
+        },
+        "Xenia": {
+            "prefer_emudeck": True,
+            "notes": "Xbox 360. Game saves and profiles from Xenia's content folder. Installed DLC, "
+                     "title updates and installed games in the same folder are skipped (they can be "
+                     "gigabytes). Close Xenia before restoring.",
+            "locations": [
+                loc("Saves",
+                    [d / "Xenia" / "content" for d in docs]
+                    + [emudeck_emus / "xenia" / "content"],
+                    exclude_dirs=XENIA_NOT_SAVES),
+            ],
+        },
         "RetroArch": {
             "notes": "Multi-system. In-game saves (.srm etc.) and save states. RetroArch "
                      "install locations vary, so use 'Locations…' if nothing is detected.",
@@ -158,7 +257,8 @@ def builtin_profiles():
 
 def _with_emudeck_folders(profiles):
     """EmuDeck points every emulator at Emulation/saves/<emulator>/... (on the Steam Deck these
-    are the folders the emulators really use). Prefer them on Linux, try them last elsewhere."""
+    are the folders the emulators really use). Prefer them on Linux, and for emulators usually run
+    through EmuDeck (prefer_emudeck); elsewhere try them last."""
     try:
         import cloudsync
         bases = [r / "saves" for r in cloudsync.emudeck_roots()]
@@ -171,7 +271,8 @@ def _with_emudeck_folders(profiles):
             if not sub:
                 continue
             extra = [str(b / sub) for b in bases]
-            loc["candidates"] = extra + loc["candidates"] if SYSTEM == "Linux" else loc["candidates"] + extra
+            first = SYSTEM == "Linux" or prof.get("prefer_emudeck")
+            loc["candidates"] = extra + loc["candidates"] if first else loc["candidates"] + extra
     return profiles
 
 # --------------------------------------------------------------------------
@@ -240,13 +341,16 @@ def matches(name, patterns):
     return any(fnmatch.fnmatchcase(low, p.lower()) for p in patterns)
 
 
-def scan_location(label, base, patterns, recursive):
+def scan_location(label, base, patterns, recursive, exclude_dirs=()):
     out = []
     if not base or not base.is_dir():
         return out
+    skip = {d.lower() for d in exclude_dirs}
     iterator = base.rglob("*") if recursive else base.glob("*")
     for p in iterator:
         try:
+            if skip and any(part.lower() in skip for part in p.relative_to(base).parts[:-1]):
+                continue
             if p.is_file() and matches(p.name, patterns):
                 st = p.stat()
                 out.append(Entry(label, p.relative_to(base), p, st.st_size, st.st_mtime))
@@ -621,7 +725,8 @@ class App(tk.Tk):
         i = 0
         for loc in self.profiles[emu]["locations"]:
             for e in scan_location(loc["label"], resolved[loc["label"]],
-                                   loc.get("patterns", ["*"]), loc.get("recursive", True)):
+                                   loc.get("patterns", ["*"]), loc.get("recursive", True),
+                                   loc.get("exclude_dirs", ())):
                 iid = str(i)
                 i += 1
                 self.entries[iid] = e

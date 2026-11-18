@@ -134,7 +134,7 @@ class SaveHistory:
                 pass
             raise
 
-    def snapshot(self, key: str, folder, reason: str, when=None, log=None) -> int:
+    def snapshot(self, key: str, folder, reason: str, when=None, log=None, exclude_dirs=()) -> int:
         """Store every file in `folder` that changed since the last snapshot.
         Returns the number of new versions.  Does not save the index (call save())."""
         folder = Path(folder)
@@ -144,10 +144,11 @@ class SaveHistory:
         limit = float(self.settings.get("max_file_mb", 256)) * 1024 * 1024
         loc = self._loc(key, create=True)
         loc["folder"] = str(folder)
+        skip_dirs = {d.lower() for d in exclude_dirs}
         files = loc["files"]
         added = 0
         for dirpath, dirnames, filenames in os.walk(folder):
-            dirnames[:] = [d for d in dirnames if not _skip(d)]
+            dirnames[:] = [d for d in dirnames if not _skip(d) and d.lower() not in skip_dirs]
             for name in filenames:
                 if _skip(name):
                     continue
@@ -383,7 +384,8 @@ def snapshot_jobs(jobs, backup_dir, settings, reason, log=None, when=None) -> in
         when = when or time.time()
         added = 0
         for j in jobs:
-            added += h.snapshot(location_key(j["emu"], j["label"]), j["local"], reason, when, log)
+            added += h.snapshot(location_key(j["emu"], j["label"]), j["local"], reason, when, log,
+                                exclude_dirs=j.get("exclude") or ())
         if added:
             h.prune()
         h.save()
