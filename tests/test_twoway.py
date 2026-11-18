@@ -42,17 +42,29 @@ assert (pc_mem / "Folder.ps2/BASLUS-20002/save.dat").exists()
 bk = list((pc / "backups/cloud_overwritten").rglob("save.dat"))
 assert bk and bk[0].read_bytes() == b"game1 v1", bk
 print("2. Deck -> cloud -> PC: ok; PC's older copy kept in", bk[0].relative_to(pc))
-# 3. both sides edit the same file: newest wins, the loser is kept in the cloud backup
-time.sleep(1.2); (deck_mem / "Mcd001.ps2").write_bytes(b"deck edit (older)")
-time.sleep(1.2); (pc_mem / "Mcd001.ps2").write_bytes(b"pc edit (newer)")
-assert sync(deck)[0] == 0                      # deck uploads its edit
-assert sync(pc)[0] == 0                        # pc's newer file replaces it in the cloud
-assert (c / "Mcd001.ps2").read_bytes() == b"pc edit (newer)"
+# 3. both sides edit the same file between syncs: a CONFLICT - nothing is overwritten either way
+#    until a side is chosen; then the chosen copy wins and the other is kept in the backups
+time.sleep(1.2); (deck_mem / "Mcd001.ps2").write_bytes(b"deck edit")
+time.sleep(1.2); (pc_mem / "Mcd001.ps2").write_bytes(b"pc edit")
+assert sync(deck)[0] == 0                      # only the Deck changed vs. the cloud: it uploads
+assert (c / "Mcd001.ps2").read_bytes() == b"deck edit"
+rc, log = sync(pc)                             # the PC changed too: conflict, nothing copied
+assert rc == 0 and "CONFLICT Mcd001.ps2" in log and "conflict(s) need your choice" in log, log[-800:]
+assert (c / "Mcd001.ps2").read_bytes() == b"deck edit" and (pc_mem / "Mcd001.ps2").read_bytes() == b"pc edit"
+st_file = [f for f in (pc / ".emu_save_manager/sync_state").glob("*.json")
+           if "Mcd001.ps2" in json.loads(f.read_text()).get("conflicts", {})][0]
+status = json.loads((pc / ".emu_save_manager/autosync_status.json").read_text())
+assert status["conflicts"] == 1 and "conflict" in status["message"], status
+st = json.loads(st_file.read_text()); st["resolve"]["Mcd001.ps2"] = "local"; st_file.write_text(json.dumps(st))
+assert sync(pc)[0] == 0                        # "keep this device's"
+assert (c / "Mcd001.ps2").read_bytes() == b"pc edit"
 kept = list((cloud / "EmuDeck/EmuSaveManager-overwritten").rglob("Mcd001.ps2"))
-assert any(k.read_bytes() == b"deck edit (older)" for k in kept), kept
-assert sync(deck)[0] == 0 and (deck_mem / "Mcd001.ps2").read_bytes() == b"pc edit (newer)"
-assert list((deck / "backups/cloud_overwritten").rglob("Mcd001.ps2"))
-print("3. conflict: newest wins, the other copy is kept:", kept[0].relative_to(cloud))
+assert any(k.read_bytes() == b"deck edit" for k in kept), kept
+assert not json.loads(st_file.read_text())["conflicts"]
+assert sync(deck)[0] == 0 and (deck_mem / "Mcd001.ps2").read_bytes() == b"pc edit"
+assert any(b.read_bytes() == b"deck edit" for b in (deck / "backups/cloud_overwritten").rglob("Mcd001.ps2"))
+print("3. both edited: conflict, nothing overwritten; 'keep this device's' applied, other copy kept:",
+      kept[0].relative_to(cloud))
 # 4. emulator running -> skipped (exit 3), nothing touched
 fake = T / "pcsx2-qt"; shutil.copy("/bin/sleep", fake)
 p = subprocess.Popen([str(fake), "30"])

@@ -30,6 +30,7 @@ from pathlib import Path
 
 import cloudsync as cs
 import savehistory
+import syncplan
 
 SYSTEM = platform.system()
 IS_WIN = SYSTEM == "Windows"
@@ -410,21 +411,18 @@ def _run_jobs(runner, jobs, remote: str, base: str, mode: str, dry: bool, backup
             break
         rpath = cs.remote_path(remote, base, p["sub"])
         log(f"== {p['emu']} / {p['label']} ==")
-        for step in (["download", "upload"] if mode == "both" else [mode]):
-            if runner.cancelled:
-                break
-            log(("Downloading" if step == "download" else "Uploading") + f"  {rpath}")
-            bk = (local_backup / p["emu"] / p["label"] if step == "download"
-                  else f"{remote_backup}/{p['emu']}/{p['label']}")
-            res = cs.sync_pair(runner, step, p["local"], rpath, dry, bk)
-            if res == "nothing-in-cloud":
-                log("Nothing in the cloud for this folder yet.")
-            elif res == "failed":
-                failed += 1
-            else:
-                ok += 1
-                if step == "upload":
-                    uploaded.add(cs.emulator_folder(p["sub"]))
+        log({"download": "Downloading", "upload": "Uploading", "both": "Syncing"}[mode] + f"  {rpath}")
+        res = syncplan.sync_job(runner, p, rpath, mode, dry,
+                                local_backup / p["emu"] / p["label"],
+                                f"{remote_backup}/{p['emu']}/{p['label']}", log)
+        if res["nothing_in_cloud"]:
+            log("Nothing in the cloud for this folder yet.")
+        if res["ok"]:
+            ok += 1
+            if res["uploaded"]:
+                uploaded.add(cs.emulator_folder(p["sub"]))
+        else:
+            failed += 1
     if uploaded and emudeck_layout and not dry and not runner.cancelled:
         log("Telling EmuDeck devices there are new saves (.hash)…")
         if not cs.bump_emudeck_hash(runner, remote, base, uploaded):
@@ -484,9 +482,13 @@ def sync_from_config(cfg: dict, profiles: dict, resolve, log, mode="both", dry=F
             write_status(result="stopped", ok=ok, failed=failed,
                          message="stopped for a manual sync from the window")
             return 3
-        log(f"Finished: {ok} step(s) OK, {failed} failed.")
-        write_status(result="ok" if not failed else "failed", ok=ok, failed=failed,
-                     message=f"{ok} step(s) OK, {failed} failed" + (" (preview)" if dry else ""))
+        n_conf = syncplan.conflict_count()
+        log(f"Finished: {ok} step(s) OK, {failed} failed." +
+            (f" {n_conf} conflict(s) need your choice - open Cloud Sync." if n_conf else ""))
+        write_status(result="ok" if not failed and not n_conf else "failed", ok=ok, failed=failed,
+                     conflicts=n_conf,
+                     message=f"{ok} step(s) OK, {failed} failed" + (" (preview)" if dry else "") +
+                             (f", {n_conf} conflict(s) to review" if n_conf else ""))
         return 0 if not failed else 1
     finally:
         stop_watching()

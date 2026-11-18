@@ -12,6 +12,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 import autosync
 import exitwatch
 import cloudsync as cs
+import syncplan
 
 
 class CloudSyncDialog(tk.Toplevel):
@@ -41,6 +42,7 @@ class CloudSyncDialog(tk.Toplevel):
         self._build()
         self._autodetect()
         self._update_conn_summary(collapse_if_ready=True)
+        self._refresh_conflicts(announce=True)
         self._load_pairs()
         self._refresh_auto()
         self.v_base.trace_add("write", lambda *_: [self._refresh_row(k) for k in self.pairs])
@@ -122,6 +124,8 @@ class CloudSyncDialog(tk.Toplevel):
         self.cancel_btn = ttk.Button(act, text="Cancel", command=self.cancel, state="disabled")
         self.cancel_btn.pack(side="right")
         ttk.Button(act, text="How sync works", command=self.explain).pack(side="right", padx=(0, 8))
+        self.conflicts_btn = ttk.Button(act, text="Conflicts", command=self.show_conflicts)
+        self.conflicts_btn.pack(side="right", padx=(0, 8))
 
         auto = ttk.LabelFrame(self, text="Automatic sync (runs in the background, even when this app is closed)",
                               padding=8)
@@ -196,6 +200,17 @@ class CloudSyncDialog(tk.Toplevel):
         self.banner.config(text=text, bg=bg or self.cget("background"), fg=fg)
         self.banner_kind = kind
 
+    def _refresh_conflicts(self, announce=False):
+        n = syncplan.conflict_count()
+        self.conflicts_btn.config(text=f"Conflicts ({n})" if n else "Conflicts",
+                                  state="normal" if n or syncplan.all_conflicts() else "disabled")
+        if announce and n:
+            self._banner("warn", f"⚠  {n} conflict(s) from an earlier sync need your choice: click Conflicts")
+        return n
+
+    def show_conflicts(self):
+        ConflictsDialog(self)
+
     def explain(self):
         messagebox.showinfo("How sync works", (
             "The newer copy of each file wins, and nothing is ever deleted: files replaced by a download "
@@ -203,6 +218,8 @@ class CloudSyncDialog(tk.Toplevel):
             "the cloud. An empty file never replaces a real save, and Save History keeps earlier versions.\n\n"
             "Close your emulators before syncing. Automatic syncs skip themselves while PCSX2, DuckStation, "
             "RetroArch, Dolphin or xemu is running.\n\n"
+            "If you played the same game on both devices between syncs, neither copy is overwritten: it "
+            "shows under Conflicts until you pick which one to keep (the other goes to the backups).\n\n"
             "Set this up the same way on the Steam Deck (same cloud remote and base folder) and both stay "
             "in sync through the cloud. If a background sync is running when you press a sync button, "
             "it is stopped and yours runs instead."), parent=self)
@@ -644,11 +661,15 @@ class CloudSyncDialog(tk.Toplevel):
                 autosync.write_status(result="ok" if not failed else "failed", ok=ok, failed=failed,
                                       message=msg + " (from the window)")
                 now = datetime.now().strftime("%H:%M")
+                n_conf = 0 if dry else syncplan.conflict_count()
                 if runner.cancelled:
                     self.q.put(("banner", "stopped", f"■  Cancelled at {now}  -  {ok} step(s) done"))
                 elif failed:
                     self.q.put(("banner", "warn", f"⚠  Finished at {now} with {failed} failed step(s)  -  "
                                                   f"see the red lines in the log"))
+                elif n_conf:
+                    self.q.put(("banner", "warn", f"⚠  Finished at {now}  -  {n_conf} conflict(s) need your "
+                                                  f"choice: click Conflicts"))
                 else:
                     self.q.put(("banner", "ok", f"✓  {'Preview' if dry else 'Sync'} complete at {now}  -  "
                                                 f"{ok} step(s) OK" + ("  (nothing was changed)" if dry else "")))
@@ -686,6 +707,7 @@ class CloudSyncDialog(tk.Toplevel):
                 elif msg[0] == "done":
                     self._set_busy(False)
                     self.runner = None
+                    self._refresh_conflicts()
                     if self.banner_kind == "busy":
                         self._banner("idle", "Done.")
                     self.app.refresh_all()
@@ -745,4 +767,82 @@ class CloudSyncDialog(tk.Toplevel):
             return
         self.cancel()
         self._save()
+        self.destroy()
+
+
+def _save_title(local_dir, item):
+    """The game's name from a PS2 save's icon.sys, if this item is a folder-card save."""
+    import unicodedata
+    try:
+        b = (Path(local_dir) / item / "icon.sys").read_bytes()
+        if b[:4] == b"PS2D":
+            t = b[0xC0:0xC0 + 68].split(b"\0")[0].decode("shift_jis", "replace")
+            return unicodedata.normalize("NFKC", t).replace("\u3000", " ").strip()
+    except OSError:
+        pass
+    return ""
+
+
+class ConflictsDialog(tk.Toplevel):
+    """Saves changed on both devices since the last sync: pick which copy to keep."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.parent = parent
+        self.title("Conflicts - saves changed on both devices")
+        self.geometry(f"{min(900, self.winfo_screenwidth() - 40)}x{min(460, self.winfo_screenheight() - 120)}")
+        self.transient(parent)
+        ttk.Label(self, wraplength=860, padding=(12, 10, 12, 4), text=(
+            "These were changed on this device AND in the cloud since the last sync, so neither was "
+            "overwritten. Pick the copy to keep for each; the other copy is moved to the backup folder "
+            "(nothing is lost). Your choice is applied at the next sync.")).pack(anchor="w")
+        cols = ("where", "what", "here", "cloud", "choice")
+        self.tree = ttk.Treeview(self, columns=cols, show="headings", selectmode="extended")
+        for c, text, w in (("where", "Folder", 160), ("what", "Save", 230), ("here", "This device", 180),
+                           ("cloud", "Cloud", 180), ("choice", "Keep", 100)):
+            self.tree.heading(c, text=text)
+            self.tree.column(c, width=w, anchor="w")
+        self.tree.pack(fill="both", expand=True, padx=12)
+        bar = ttk.Frame(self, padding=12)
+        bar.pack(fill="x")
+        ttk.Button(bar, text="Keep this device's", command=lambda: self._choose("local")).pack(side="left")
+        ttk.Button(bar, text="Keep the cloud's", command=lambda: self._choose("cloud")).pack(side="left", padx=6)
+        ttk.Button(bar, text="Close", command=self._close).pack(side="right")
+        self.sync_btn = ttk.Button(bar, text="Apply now (Sync both ways)", command=self._apply)
+        self.sync_btn.pack(side="right", padx=6)
+        self.rows = {}
+        self._load()
+
+    @staticmethod
+    def _desc(t, size):
+        return f"{datetime.fromtimestamp(t).strftime('%Y-%m-%d %H:%M') if t else '?'}  ·  {size // 1024 or 1} KB"
+
+    def _load(self):
+        self.tree.delete(*self.tree.get_children())
+        self.rows = {}
+        for i, (f, st, item, info) in enumerate(syncplan.all_conflicts()):
+            title = _save_title(st.get("local", ""), item)
+            what = f"{title}  ({item.split('/')[-1]})" if title else item
+            choice = {"local": "this device's", "cloud": "the cloud's"}.get(st.get("resolve", {}).get(item), "?")
+            iid = f"c{i}"
+            self.rows[iid] = (f, item)
+            self.tree.insert("", "end", iid=iid, values=(
+                f"{st.get('emu', '')} / {st.get('label', '')}", what,
+                self._desc(info.get("local_time"), info.get("local_size", 0)),
+                self._desc(info.get("cloud_time"), info.get("cloud_size", 0)), choice))
+
+    def _choose(self, side):
+        sel = self.tree.selection() or self.tree.get_children()[:1]
+        for iid in sel:
+            f, item = self.rows[iid]
+            syncplan.choose(f, item, side)
+        self._load()
+        self.parent._refresh_conflicts()
+
+    def _apply(self):
+        self._close()
+        self.parent.start("both")
+
+    def _close(self):
+        self.parent._refresh_conflicts()
         self.destroy()

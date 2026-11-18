@@ -20,6 +20,7 @@ Keep all `.py` files in this folder together and run:
 | `tools/build_bios_db.py` | regenerates `biosdb_data.py` from libretro's System.dat |
 | `autosync.py` | background two-way sync (`--sync`) and its Windows / systemd scheduling - no GUI |
 | `exitwatch.py` | sync after an emulator or ES-DE closes (`--watch`) and starting it at sign-in - no GUI |
+| `syncplan.py` | decides what each sync copies: remembers the last synced state, conflicts, folder-card saves as one item - no GUI |
 | `savehistory.py` | Save History: earlier versions of synced saves, kept at every sync; restore - no GUI |
 | `ui_history.py` | Save History window |
 
@@ -40,12 +41,18 @@ Install the app on both (Windows: `EmuSaveManager-Setup.exe`; Steam Deck: see *B
    (waiting for any other emulator to close first). On the Deck, "ES-DE closes" means quitting
    EmulationStation in Game Mode; on the PC, "an emulator closes" covers emulators started any way.
 
-How conflicts are handled: newest file wins, nothing is ever deleted. Files a download replaces go to
-`<backup folder>/cloud_overwritten/`; files an upload replaces go to `<base parent>/EmuSaveManager-overwritten/`
-in the cloud (OneDrive's own version history is there as well). A background sync is skipped while PCSX2,
-DuckStation, RetroArch, Dolphin or xemu is running, and only one sync runs at a time.
-Use PCSX2 *folder* memory cards (Settings > Memory Cards > Convert) so each game's save is its own file;
-a whole-card `.ps2` file changed on both devices between syncs keeps only the newer copy (the other is backed up).
+How changes are decided: after every sync the app remembers what each item looked like on both sides
+(`~/.emu_save_manager/sync_state/`). Next time, the side that **changed** wins, even if its date is older.
+If **both** sides changed the same item since the last sync, nothing is copied either way: it is listed
+under **Conflicts** in Cloud Sync until you choose "Keep this device's" or "Keep the cloud's". Items never
+synced before fall back to "the newer copy wins". Inside a PCSX2 *folder* memory card (`<name>.ps2/`
+folder) each game's save folder is one item that is always copied whole, so a save can't end up half from
+each device; a card that is a file on one device and a folder on the other is reported once and skipped.
+Nothing is ever lost: files a download replaces go to `<backup folder>/cloud_overwritten/`, files an upload
+replaces go to `<base parent>/EmuSaveManager-overwritten/` in the cloud (OneDrive's own version history is
+there as well). A background sync is skipped while PCSX2, DuckStation, RetroArch, Dolphin or xemu is
+running, and only one sync runs at a time. Use PCSX2 *folder* memory cards (Settings > Memory Cards >
+Convert) so each game's save syncs on its own.
 
 Command line (what the scheduler runs): `EmuSaveManager --sync` (add `--dry-run` to preview,
 `--download` / `--upload` for one direction, `--force` to sync even while an emulator runs).
