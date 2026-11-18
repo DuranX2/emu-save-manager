@@ -19,6 +19,11 @@ PKG=dist/EmuSaveManager-linux
 rm -rf "$PKG"; mkdir -p "$PKG"
 cp -r dist/EmuSaveManager "$PKG/app"
 cp packaging/install.sh "$PKG/install.sh"
+# the icon and Steam artwork must be in the package (install.sh and --add-to-steam use them)
+for f in capsule.png wide.png hero.png logo.png icon-256.png icon-16.png; do
+  [ -f "$PKG/app/_internal/art/$f" ] || { echo "Missing artwork in the package: $f"; exit 1; }
+done
+echo "Artwork bundled: $(ls "$PKG/app/_internal/art" | tr '\n' ' ')"
 chmod +x "$PKG/install.sh" "$PKG/app/EmuSaveManager"
 tar -C dist -czf dist/EmuSaveManager-linux-x86_64.tar.gz EmuSaveManager-linux
 echo "Built: dist/EmuSaveManager-linux-x86_64.tar.gz"
