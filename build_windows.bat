@@ -5,8 +5,18 @@ rem Requires Python 3.8+ with tkinter (the python.org installer includes it) on 
 setlocal
 cd /d "%~dp0"
 
-py -3 -m pip install --upgrade pyinstaller || goto :err
-py -3 -m PyInstaller --noconfirm --clean --windowed --name EmuSaveManager ^
+rem Compile PyInstaller's launcher from source (needs Visual Studio's C++ build tools): the prebuilt
+rem one is shared by many programs and often trips antivirus heuristics. Set QUICK=1 to skip that.
+if defined QUICK (
+  py -3 -m pip install --upgrade pyinstaller || goto :err
+) else (
+  set PYINSTALLER_COMPILE_BOOTLOADER=1
+  py -3 -m pip uninstall -y pyinstaller
+  py -3 -m pip install --no-cache-dir --no-binary=pyinstaller "pyinstaller>=6.10,<7" || goto :err
+)
+if not defined APP_VER set APP_VER=0.0.0
+py -3 packaging\make_version_info.py %APP_VER% build\version_info.txt || goto :err
+py -3 -m PyInstaller --noconfirm --clean --windowed --noupx --name EmuSaveManager --version-file build\version_info.txt ^
   --hidden-import ps2mc --hidden-import ps2folder --hidden-import cloudsync --hidden-import autosync --hidden-import exitwatch --hidden-import biosdb --hidden-import biosdb_data --hidden-import biosvault --hidden-import biostargets --hidden-import ui_biosvault ^
   --hidden-import ui_ps2cards --hidden-import ui_cloud --hidden-import savehistory --hidden-import ui_history ^
   emu_save_manager.py || goto :err
