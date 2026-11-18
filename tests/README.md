@@ -8,4 +8,4 @@ cloud tests; the `gui_*.py` scripts need a display (on Linux: `xvfb-run -a pytho
     for g in tests/gui_*.py; do xvfb-run -a python3 "$g" | tail -1; done
 
 They use throw-away folders under /tmp and never touch real saves or settings
-(HOME is pointed at a temp folder). Screenshots from gui_* go to /tmp/*.png.
+(HOME is pointed at a temp folder). Screenshots from gui_* go to /tmp/*.png. `gui_deck.py` restarts itself on a 1280x800 virtual screen (the Steam Deck's) when `xvfb-run` is available.

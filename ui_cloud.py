@@ -1,7 +1,9 @@
 """ui_cloud.py - window for syncing saves with OneDrive or EmuDeck Cloud in EmuDeck's folder layout."""
 
+import os
 import queue
 import threading
+import time
 import tkinter as tk
 from datetime import datetime
 from pathlib import Path
@@ -17,8 +19,16 @@ class CloudSyncDialog(tk.Toplevel):
         super().__init__(app)
         self.app = app
         self.title("Cloud Sync (OneDrive or EmuDeck Cloud, EmuDeck layout)")
-        self.geometry("980x780")
-        self.minsize(820, 560)
+        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        self.compact = sh < 900                  # Steam Deck (1280x800) and other small screens
+        w, h = min(980, sw - 20), min(780, sh - 70)
+        self.geometry(f"{w}x{h}")
+        self.minsize(min(820, w), min(520, h))
+        if self.compact and autosync.SYSTEM != "Windows":
+            try:
+                self.attributes("-zoomed", True)  # fill the Deck's screen
+            except tk.TclError:
+                pass
         self.transient(app)
         self.cfg = app.cfg.setdefault("cloud", {})
         self.cfg.setdefault("pairs", {})
@@ -26,8 +36,11 @@ class CloudSyncDialog(tk.Toplevel):
         self.runner = None
         self.busy = False
         self.pairs = {}                       # iid -> dict
+        self._ticks = 0
+        self._last_banner = None
         self._build()
         self._autodetect()
+        self._update_conn_summary(collapse_if_ready=True)
         self._load_pairs()
         self._refresh_auto()
         self.v_base.trace_add("write", lambda *_: [self._refresh_row(k) for k in self.pairs])
@@ -36,9 +49,18 @@ class CloudSyncDialog(tk.Toplevel):
 
     # ---- UI -------------------------------------------------------------------
     def _build(self):
+        summary = ttk.Frame(self, padding=(10, 8, 10, 0))
+        summary.pack(fill="x")
+        self.conn_label = ttk.Label(summary, text="", foreground="#1f5fa8")
+        self.conn_label.pack(side="left")
+        self.conn_btn = ttk.Button(summary, text="Hide connection settings ▴", command=self._toggle_conn)
+        self.conn_btn.pack(side="right")
+        self.conn_summary = summary
         top = ttk.Frame(self, padding=10)
         top.pack(fill="x")
         top.columnconfigure(1, weight=1)
+        self.conn_frame = top
+        self.conn_open = True
         self.v_rclone = tk.StringVar(value=self.cfg.get("rclone", ""))
         self.v_conf = tk.StringVar(value=self.cfg.get("config", ""))
         self.v_remote = tk.StringVar(value=self.cfg.get("remote", ""))
@@ -77,7 +99,8 @@ class CloudSyncDialog(tk.Toplevel):
         frame = ttk.LabelFrame(self, text="What to sync (double-click a row to switch it on or off)", padding=6)
         frame.pack(fill="x", padx=10)
         cols = ("sync", "emu", "loc", "local", "cloud")
-        self.tree = ttk.Treeview(frame, columns=cols, show="headings", height=7, selectmode="browse")
+        self.tree = ttk.Treeview(frame, columns=cols, show="headings", height=4 if self.compact else 7,
+                                 selectmode="browse")
         for c, text, w in (("sync", "Sync", 50), ("emu", "Emulator", 100), ("loc", "Location", 110),
                            ("local", "This PC", 340), ("cloud", "Cloud folder", 260)):
             self.tree.heading(c, text=text)
@@ -98,12 +121,7 @@ class CloudSyncDialog(tk.Toplevel):
             self.buttons.append(b)
         self.cancel_btn = ttk.Button(act, text="Cancel", command=self.cancel, state="disabled")
         self.cancel_btn.pack(side="right")
-
-        note = ("Newer file wins and nothing is ever deleted: files replaced by a download go to your "
-                "backup folder, files replaced by an upload go to EmuSaveManager-overwritten in the cloud. "
-                "Close your emulators before syncing, and avoid editing the same memory card file on two "
-                "devices between syncs (PCSX2 folder memory cards keep each game separate).")
-        ttk.Label(self, text=note, wraplength=930, foreground="#555", padding=(10, 0)).pack(anchor="w")
+        ttk.Button(act, text="How sync works", command=self.explain).pack(side="right", padx=(0, 8))
 
         auto = ttk.LabelFrame(self, text="Automatic sync (runs in the background, even when this app is closed)",
                               padding=8)
@@ -132,14 +150,19 @@ class CloudSyncDialog(tk.Toplevel):
                         command=self.toggle_exit).pack(side="left", padx=(10, 0))
         self.auto_status = ttk.Label(self, text="", foreground="#1f5fa8", padding=(12, 2))
         self.auto_status.pack(anchor="w")
-        ttk.Label(self, text="Skipped automatically while PCSX2, DuckStation, RetroArch, Dolphin or xemu is "
-                             "running. Set this up the same way on the Steam Deck (same cloud remote and "
-                             "base folder) and both stay in sync through the cloud.",
-                  wraplength=930, foreground="#555", padding=(10, 2)).pack(anchor="w")
 
-        logf = ttk.Frame(self, padding=10)
+        self.banner = tk.Label(self, text="", anchor="w", padx=12, pady=7,
+                               font=("TkDefaultFont", 11, "bold"))
+        self.banner.pack(fill="x", padx=10, pady=(6, 0))
+        self._banner("idle", "Ready.")
+
+        logf = ttk.Frame(self, padding=(10, 6, 10, 10))
         logf.pack(fill="both", expand=True)
-        self.log = tk.Text(logf, height=12, wrap="word", state="disabled")
+        self.log = tk.Text(logf, height=10, wrap="word", state="disabled")
+        self.log.tag_configure("error", foreground="#c62828")
+        self.log.tag_configure("warn", foreground="#e65100")
+        self.log.tag_configure("good", foreground="#2e7d32", font=("TkDefaultFont", 10, "bold"))
+        self.log.tag_configure("bad", foreground="#c62828", font=("TkDefaultFont", 10, "bold"))
         sb = ttk.Scrollbar(logf, orient="vertical", command=self.log.yview)
         self.log.configure(yscrollcommand=sb.set)
         self.log.pack(side="left", fill="both", expand=True)
@@ -150,10 +173,63 @@ class CloudSyncDialog(tk.Toplevel):
         self.q.put(("log", text))
 
     def _log_now(self, text):
+        low = text.lower()
+        tag = ()
+        if "finished:" in low or "stopped early:" in low:
+            tag = ("good",) if " 0 failed" in low and "stopped" not in low else ("bad",)
+        elif "directory not found" in low or "retrying may help" in low:
+            tag = ()                    # rclone's wording when a folder isn't in the cloud yet: harmless
+        elif "error" in low or "failed" in low or "unauthenticated" in low:
+            tag = ("error",)
+        elif "warning" in low or "protected" in low or "skipped" in low or "cancel" in low:
+            tag = ("warn",)
         self.log.config(state="normal")
-        self.log.insert("end", text + "\n")
+        self.log.insert("end", text + "\n", tag)
         self.log.see("end")
         self.log.config(state="disabled")
+
+    BANNER = {"idle": (None, "#555555"), "busy": ("#1f5fa8", "white"), "ok": ("#2e7d32", "white"),
+              "warn": ("#e65100", "white"), "stopped": ("#616161", "white"), "info": ("#e8eef7", "#1f3f6a")}
+
+    def _banner(self, kind, text):
+        bg, fg = self.BANNER.get(kind, self.BANNER["idle"])
+        self.banner.config(text=text, bg=bg or self.cget("background"), fg=fg)
+        self.banner_kind = kind
+
+    def explain(self):
+        messagebox.showinfo("How sync works", (
+            "The newer copy of each file wins, and nothing is ever deleted: files replaced by a download "
+            "go to your backup folder, files replaced by an upload go to EmuSaveManager-overwritten in "
+            "the cloud. An empty file never replaces a real save, and Save History keeps earlier versions.\n\n"
+            "Close your emulators before syncing. Automatic syncs skip themselves while PCSX2, DuckStation, "
+            "RetroArch, Dolphin or xemu is running.\n\n"
+            "Set this up the same way on the Steam Deck (same cloud remote and base folder) and both stay "
+            "in sync through the cloud. If a background sync is running when you press a sync button, "
+            "it is stopped and yours runs instead."), parent=self)
+
+    def _toggle_conn(self, show=None):
+        show = (not self.conn_open) if show is None else show
+        if show and not self.conn_open:
+            self.conn_frame.pack(fill="x", after=self.conn_summary)
+        elif not show and self.conn_open:
+            self.conn_frame.pack_forget()
+        self.conn_open = show
+        self.conn_btn.config(text="Hide connection settings ▴" if show else "Connection settings ▾")
+
+    def _update_conn_summary(self, collapse_if_ready=False):
+        exe, remote = self.v_rclone.get(), self.v_remote.get()
+        ready = bool(exe and Path(exe).is_file() and remote)
+        if ready:
+            v = cs.rclone_version(exe)
+            kind = dict(cs.list_remotes(self.v_conf.get())).get(remote, "")
+            self.conn_label.config(text=f"Connected to {remote}" + (f" ({kind})" if kind else "") +
+                                   f"  ·  folder {self.v_base.get()}  ·  rclone "
+                                   f"{'.'.join(map(str, v)) if v else '?'}", foreground="#1f5fa8")
+        else:
+            self.conn_label.config(text="Not set up yet: fill in the connection settings below.",
+                                   foreground="#c62828")
+        if collapse_if_ready:
+            self._toggle_conn(show=not ready)
 
     def _browse(self, var):
         f = filedialog.askopenfilename(parent=self)
@@ -455,6 +531,10 @@ class CloudSyncDialog(tk.Toplevel):
                          "remote": self.v_remote.get(), "base": self.v_base.get().strip() or cs.DEFAULT_BASE})
         self.cfg["pairs"] = {k: {"sub": p["sub"], "enabled": p["enabled"]} for k, p in self.pairs.items()}
         self.app.save_cfg()
+        try:
+            self._update_conn_summary()
+        except tk.TclError:
+            pass
 
     # ---- running ------------------------------------------------------------------------------
     def _ready(self, background=False):
@@ -492,8 +572,17 @@ class CloudSyncDialog(tk.Toplevel):
         self._save()
         runner = cs.RcloneRunner(self.v_rclone.get(), self.v_conf.get(), self._write)
         remote, base = self.v_remote.get(), self.v_base.get()
-        self._launch(runner, lambda: self._write("Connection OK." if cs.test_connection(runner, remote, base)
-                                                 else "Connection FAILED - see the messages above."))
+        self._banner("busy", "⟳  Testing the connection…")
+
+        def work():
+            if cs.test_connection(runner, remote, base):
+                self._write("Connection OK.")
+                self.q.put(("banner", "ok", "✓  Connection OK"))
+            else:
+                self._write("Connection FAILED - see the messages above.")
+                self.q.put(("banner", "warn", "✗  Connection failed - see the log below"))
+
+        self._launch(runner, work)
 
     def start(self, mode):
         if self.busy or not self._ready():
@@ -506,21 +595,44 @@ class CloudSyncDialog(tk.Toplevel):
                                 "folder exists on this PC.", parent=self)
             return
         dry = self.v_dry.get()
-        if not dry:
-            what = {"download": "Cloud files NEWER than yours will replace the ones on this PC.",
-                    "upload": "Files on this PC NEWER than the cloud copy will replace the cloud copy.",
-                    "both": "The newest copy of each file wins, in both directions."}[mode]
-            if not messagebox.askokcancel("Cloud Sync", f"{what}\n\nClose your emulators first. Continue?",
-                                          parent=self):
+        lock = autosync.SyncLock(kind="window")
+        other = lock.busy_with()
+        takeover = ""
+        if other:
+            if int(other.get("pid") or 0) == os.getpid():
+                messagebox.showinfo("Cloud Sync", "A restore from Save History is still running. Try again "
+                                    "when it's done.", parent=self)
                 return
+            started = other.get("started") or 0
+            mins = max(0, int((time.time() - started) / 60)) if started else 0
+            takeover = (f"A background sync is running right now (started {mins} min ago). It will be "
+                        f"stopped first, then yours runs.\n\n")
+        what = {"download": "Cloud files NEWER than yours will replace the ones on this device.",
+                "upload": "Files on this device NEWER than the cloud copy will replace the cloud copy.",
+                "both": "The newest copy of each file wins, in both directions."}[mode]
+        if dry:
+            what = "Preview only: nothing will be changed."
+        if (not dry or takeover) and not messagebox.askokcancel(
+                "Cloud Sync", f"{takeover}{what}\n\nClose your emulators first. Continue?", parent=self):
+            return
         runner = cs.RcloneRunner(self.v_rclone.get(), self.v_conf.get(), self._write)
         remote, base = self.v_remote.get(), self.v_base.get()
         log = autosync.Log(echo=self._write)
+        label = {"download": "Downloading", "upload": "Uploading", "both": "Syncing"}[mode]
+        self._banner("busy", f"⟳  {label}…" + ("  (preview)" if dry else ""))
 
         def work():
-            lock = autosync.SyncLock()
+            if takeover:
+                self._write("Stopping the background sync first…")
+                self.q.put(("banner", "busy", "⟳  Stopping the background sync first…"))
+                if not lock.request_stop(log=self._write):
+                    self._write("The background sync couldn't be stopped. Try again in a minute.")
+                    self.q.put(("banner", "warn", "✗  Couldn't stop the background sync - try again in a minute"))
+                    return
+                self.q.put(("banner", "busy", f"⟳  {label}…" + ("  (preview)" if dry else "")))
             if not lock.acquire():
-                self._write("A background sync is running right now - try again in a minute.")
+                self._write("Another sync started at the same moment - try again in a minute.")
+                self.q.put(("banner", "warn", "✗  Another sync is running - try again in a minute"))
                 return
             try:
                 ok, failed = autosync.run_jobs(runner, jobs, remote, base, mode, dry,
@@ -531,6 +643,15 @@ class CloudSyncDialog(tk.Toplevel):
                 log(f"\n{tail}Finished: {msg}.")
                 autosync.write_status(result="ok" if not failed else "failed", ok=ok, failed=failed,
                                       message=msg + " (from the window)")
+                now = datetime.now().strftime("%H:%M")
+                if runner.cancelled:
+                    self.q.put(("banner", "stopped", f"■  Cancelled at {now}  -  {ok} step(s) done"))
+                elif failed:
+                    self.q.put(("banner", "warn", f"⚠  Finished at {now} with {failed} failed step(s)  -  "
+                                                  f"see the red lines in the log"))
+                else:
+                    self.q.put(("banner", "ok", f"✓  {'Preview' if dry else 'Sync'} complete at {now}  -  "
+                                                f"{ok} step(s) OK" + ("  (nothing was changed)" if dry else "")))
             finally:
                 lock.release()
 
@@ -560,9 +681,13 @@ class CloudSyncDialog(tk.Toplevel):
                 msg = self.q.get_nowait()
                 if msg[0] == "log":
                     self._log_now(msg[1])
+                elif msg[0] == "banner":
+                    self._banner(msg[1], msg[2])
                 elif msg[0] == "done":
                     self._set_busy(False)
                     self.runner = None
+                    if self.banner_kind == "busy":
+                        self._banner("idle", "Done.")
                     self.app.refresh_all()
                     self._refresh_auto()
                 elif msg[0] == "emudeck":
@@ -587,8 +712,32 @@ class CloudSyncDialog(tk.Toplevel):
                     self._save()
         except queue.Empty:
             pass
+        self._ticks += 1
+        if self._ticks % 30 == 0 and not self.busy:          # every ~3 s: show a running background sync
+            self._show_background()
         if self.winfo_exists():
             self.after(100, self._poll)
+
+    def _show_background(self):
+        try:
+            other = autosync.SyncLock().busy_with()
+        except Exception:  # noqa
+            other = None
+        if other and other.get("kind") != "restore" and int(other.get("pid") or 0) != os.getpid():
+            started = datetime.fromtimestamp(other.get("started") or time.time()).strftime("%H:%M")
+            self._banner("info", f"⟳  A background sync is running (started {started}). Pressing a sync "
+                                 f"button stops it and runs yours.")
+            self._bg_shown = True
+        elif getattr(self, "_bg_shown", False):
+            self._bg_shown = False
+            self._refresh_auto()
+            last = autosync.read_status()
+            if last.get("result") == "ok":
+                self._banner("ok", f"✓  Background sync complete  -  {last.get('message', '')}")
+            elif last.get("result") in ("failed",):
+                self._banner("warn", f"⚠  Background sync finished with problems  -  {last.get('message', '')}")
+            else:
+                self._banner("idle", "Ready.")
 
     def _close(self):
         if self.busy and not messagebox.askyesno("Cloud Sync", "A sync is still running. Cancel it and close?",

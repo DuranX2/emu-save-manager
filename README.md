@@ -56,6 +56,8 @@ On the Steam Deck the app finds EmuDeck's `Emulation/saves/<emulator>/...` folde
 
 **Empty files never replace real ones.** If the copy on one side is empty (0 bytes) and the other side's file has content, the sync keeps the real one and says so in the log, whichever date is newer. New empty files (some games use them) still sync.
 
+**Manual syncs take over.** Pressing a sync button while a background sync runs stops the background sync (cleanly, between files) and runs yours. A lock left by a sync that died, or from before a restart, is cleared straight away. The Cloud Sync window shows the result in a coloured banner (green: complete, orange: some steps failed) and fits small screens such as the Steam Deck's: the connection settings fold into one line once they're set up.
+
 ## Save History
 Every sync keeps earlier versions of the synced saves on that device: once before the sync (what you changed
 by playing there) and once after it (what arrived from the other device). Only changed files are stored, and

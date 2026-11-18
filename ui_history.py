@@ -225,7 +225,7 @@ class SaveHistoryDialog(tk.Toplevel):
             messagebox.showwarning(TITLE, f"Close the emulator first ({', '.join(emus)} is running).",
                                    parent=self)
             return None
-        lock = autosync.SyncLock()
+        lock = autosync.SyncLock(kind="restore")
         if not lock.acquire():
             messagebox.showinfo(TITLE, "A sync is running right now. Try again in a minute.", parent=self)
             return None
