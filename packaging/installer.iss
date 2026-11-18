@@ -10,6 +10,9 @@
 AppId={{6B1E5C7A-3C1D-4D0B-9B52-5E1F0A7D2C41}
 AppName={#AppName}
 AppVersion={#AppVer}
+AppPublisher=DuranX2
+VersionInfoDescription={#AppName} Setup
+VersionInfoProductName={#AppName}
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
