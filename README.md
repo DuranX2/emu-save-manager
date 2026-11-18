@@ -147,3 +147,7 @@ PyInstaller can't cross-compile, so each OS is built on that OS:
   On the Deck (Desktop Mode): extract it, run `./install.sh`. Uninstall with `./install.sh --remove`.
 - **No build machine?** Push this folder to a GitHub repo; `.github/workflows/build.yml` builds both
   (Actions tab > Build packages > Run workflow, then download the artifacts).
+
+## Licence
+MIT - see [LICENSE](LICENSE). `biosdb_data.py` is derived from libretro's database and stays under
+CC BY-SA 4.0, as its header says.
