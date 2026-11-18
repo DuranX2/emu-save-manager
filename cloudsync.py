@@ -211,17 +211,106 @@ def find_emudeck_signins():
     return out
 
 
-def find_rclone(saved: str = "") -> str:
-    if saved and Path(saved).is_file():
-        return saved
+# Older rclone sends OneDrive's upload-session PUTs with an Authorization header, which OneDrive
+# now rejects ("unauthenticated: Unauthenticated").  Listing and downloading still work, and empty
+# files (a simple PUT) still upload - so every real file fails and only empty ones arrive.
+# EmuDeck's bundled rclone was 1.60.x on the Steam Deck.  Fixed in rclone 1.66.
+MIN_RCLONE = (1, 66)
+_version_cache = {}
+
+
+def rclone_version(exe: str):
+    """(major, minor) of an rclone executable, or None if it can't be run."""
+    if not exe or not Path(exe).is_file():
+        return None
+    try:
+        key = (str(exe), Path(exe).stat().st_mtime)
+    except OSError:
+        return None
+    if key not in _version_cache:
+        kw = {"creationflags": 0x08000000} if IS_WIN else {}
+        try:
+            out = subprocess.run([exe, "version"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                 stdin=subprocess.DEVNULL, text=True, errors="replace", timeout=30, **kw).stdout
+        except (OSError, subprocess.TimeoutExpired):
+            out = ""
+        m = re.search(r"rclone v(\d+)\.(\d+)", out)
+        _version_cache[key] = (int(m.group(1)), int(m.group(2))) if m else None
+    return _version_cache[key]
+
+
+def rclone_ok(exe: str) -> bool:
+    v = rclone_version(exe)
+    return bool(v and v >= MIN_RCLONE)
+
+
+def _rclone_candidates(saved: str = ""):
+    out = []
+    if saved:
+        out.append(str(saved))
     for root in emudeck_roots():
-        p = root / "tools" / "rclone" / EXE
-        if p.is_file():
-            return str(p)
-    own = OWN_RCLONE_DIR / EXE
-    if own.is_file():
-        return str(own)
-    return shutil.which("rclone") or ""
+        out.append(str(root / "tools" / "rclone" / EXE))
+    out.append(str(OWN_RCLONE_DIR / EXE))
+    w = shutil.which("rclone")
+    if w:
+        out.append(w)
+    seen, uniq = set(), []
+    for p in out:
+        if p not in seen and Path(p).is_file():
+            seen.add(p)
+            uniq.append(p)
+    return uniq
+
+
+def find_rclone(saved: str = "") -> str:
+    """The first rclone new enough to upload to OneDrive; otherwise the first one found."""
+    cands = _rclone_candidates(saved)
+    for p in cands:
+        if rclone_ok(p):
+            return p
+    return cands[0] if cands else ""
+
+
+def remote_type(conf: str, remote: str) -> str:
+    return dict(list_remotes(conf)).get(remote, "")
+
+
+def needs_new_rclone(conf: str, remote: str) -> bool:
+    """Only OneDrive is affected by the old-rclone upload bug."""
+    return remote_type(conf, remote) == "onedrive"
+
+
+def usable_rclone(saved: str = "", log=None, allow_download=True, conf: str = "", remote: str = "") -> str:
+    """An rclone that can upload: the saved one if it is new enough, else another one found
+    on this device, else a freshly downloaded current build.  If that fails too, the old one
+    is returned with a warning (downloads still work with it).  With conf and remote given,
+    the version only matters when the remote is OneDrive."""
+    if remote and not needs_new_rclone(conf, remote):
+        return saved if saved and Path(saved).is_file() else find_rclone(saved)
+    found = find_rclone(saved)
+    if found and rclone_ok(found):
+        if saved and found != saved and log:
+            v = rclone_version(saved)
+            log(f"Using {found} instead of {saved} (rclone {'.'.join(map(str, v)) if v else '?'} is too old "
+                f"to upload to OneDrive).")
+        return found
+    if allow_download:
+        if log:
+            v = rclone_version(found) if found else None
+            log(("No rclone found" if not found else
+                 f"rclone {'.'.join(map(str, v)) if v else '?'} at {found} is too old to upload to OneDrive")
+                + " - downloading the current rclone…")
+        try:
+            path = str(download_rclone(log=log))
+            if rclone_ok(path):
+                return path
+        except Exception as ex:  # noqa
+            if log:
+                log(f"rclone download failed: {ex}")
+    if found and log:
+        log("WARNING: this rclone is too old for OneDrive uploads (needs 1.66 or newer). Use 'Download "
+            "rclone' in Cloud Sync.")
+    return found
 
 
 def default_rclone_conf() -> Path:

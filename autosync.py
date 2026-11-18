@@ -260,7 +260,8 @@ def sync_from_config(cfg: dict, profiles: dict, resolve, log, mode="both", dry=F
     """One complete sync with the saved Cloud Sync settings.  Exit code:
     0 ok, 1 some steps failed, 2 not set up, 3 skipped (emulator running / already syncing)."""
     c = cfg.get("cloud", {})
-    exe = c.get("rclone") or cs.find_rclone()
+    exe = (cs.usable_rclone(c.get("rclone", ""), log, conf=c.get("config", ""), remote=c.get("remote", ""))
+           if c.get("remote") else "")
     conf, remote = c.get("config", ""), c.get("remote", "")
     base = c.get("base") or cs.DEFAULT_BASE
     if not exe or not Path(exe).is_file() or not remote:
