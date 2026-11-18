@@ -20,6 +20,7 @@ Keep all `.py` files in this folder together and run:
 | `tools/build_bios_db.py` | regenerates `biosdb_data.py` from libretro's System.dat |
 | `autosync.py` | background two-way sync (`--sync`) and its Windows / systemd scheduling - no GUI |
 | `exitwatch.py` | sync after an emulator or ES-DE closes (`--watch`) and starting it at sign-in - no GUI |
+| `steamshortcut.py` | Steam Deck: adds the app to the Steam library (Game Mode) with artwork - no GUI |
 | `syncplan.py` | decides what each sync copies: remembers the last synced state, conflicts, folder-card saves as one item - no GUI |
 | `savehistory.py` | Save History: earlier versions of synced saves, kept at every sync; restore - no GUI |
 | `ui_history.py` | Save History window |
@@ -72,6 +73,16 @@ On the Steam Deck the app finds EmuDeck's `Emulation/saves/<emulator>/...` folde
 **Empty files never replace real ones.** If the copy on one side is empty (0 bytes) and the other side's file has content, the sync keeps the real one and says so in the log, whichever date is newer. New empty files (some games use them) still sync.
 
 **Manual syncs take over.** Pressing a sync button while a background sync runs stops the background sync (cleanly, between files) and runs yours. A lock left by a sync that died, or from before a restart, is cleared straight away. The Cloud Sync window shows the result in a coloured banner (green: complete, orange: some steps failed) and fits small screens such as the Steam Deck's: the connection settings fold into one line once they're set up.
+
+## Steam Deck Game Mode
+`./install.sh` on the Deck installs the app with its icon (application menu and Desktop shortcut) and offers
+to add it to your Steam library with its own artwork (library tile, wide tile, banner and logo), so it can
+be found and started in Game Mode under *Non-Steam*. Steam has to close for a moment while its shortcut
+list changes; the installer closes it and starts it again. Run `./install.sh --steam` to do it without the
+question, or later: `~/.local/share/EmuSaveManager/EmuSaveManager --add-to-steam`
+(`--remove-from-steam` takes it out; `./install.sh --remove` does too). Steam's `shortcuts.vdf` is backed up
+next to itself before every change. The artwork is in `packaging/art/` (`tools/make_art.py` draws it).
+In Game Mode, use the touchscreen or the trackpad as the mouse, and Steam + X for the keyboard.
 
 ## Save History
 Every sync keeps earlier versions of the synced saves on that device: once before the sync (what you changed
