@@ -38,7 +38,7 @@ jobs:
           pyinstaller --noconfirm --clean --windowed --noupx --name EmuSaveManager
           --version-file build/version_info.txt
           --hidden-import ps2mc --hidden-import ps2folder --hidden-import cloudsync --hidden-import autosync --hidden-import exitwatch --hidden-import biosdb --hidden-import biosdb_data --hidden-import biosvault --hidden-import biostargets --hidden-import ui_biosvault
-          --hidden-import ui_ps2cards --hidden-import ui_cloud --hidden-import savehistory --hidden-import ui_history
+          --hidden-import ui_ps2cards --hidden-import ui_cloud --hidden-import savehistory --hidden-import ui_history --hidden-import syncplan
           emu_save_manager.py
       - name: Build installer
         run: |
