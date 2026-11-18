@@ -29,6 +29,7 @@ from datetime import datetime
 from pathlib import Path
 
 import cloudsync as cs
+import savehistory
 
 SYSTEM = platform.system()
 IS_WIN = SYSTEM == "Windows"
@@ -43,6 +44,8 @@ LOG_MAX_BYTES = 1_000_000
 TASK_NAME = "EmuSaveManager Auto-Sync"
 UNIT = "emu-save-manager-sync"
 INTERVALS = (5, 10, 15, 30, 60, 120)
+
+# (Save History snapshots each synced folder before and after a sync: savehistory.py)
 
 # Process names (lower case) that mean "an emulator is running - don't sync now".
 # Linux names are what /proc/<pid>/comm shows (max 15 characters).  Note: plain
@@ -200,9 +203,25 @@ def build_jobs(cfg: dict, profiles: dict, resolve):
     return jobs
 
 
-def run_jobs(runner, jobs, remote: str, base: str, mode: str, dry: bool, backup_dir: Path, log):
+def run_jobs(runner, jobs, remote: str, base: str, mode: str, dry: bool, backup_dir: Path, log,
+             history=None):
     """mode: 'download', 'upload' or 'both' (download first, then upload).
+    history: the 'history' settings (see savehistory.DEFAULTS); None = defaults.
     Returns (steps ok, steps failed)."""
+    if not dry:
+        n = savehistory.snapshot_jobs(jobs, backup_dir, history, "local", log)
+        if n:
+            log(f"History: kept {n} changed file(s) from this device.")
+    try:
+        return _run_jobs(runner, jobs, remote, base, mode, dry, backup_dir, log)
+    finally:
+        if not dry:
+            n = savehistory.snapshot_jobs(jobs, backup_dir, history, "cloud", log)
+            if n:
+                log(f"History: kept {n} file(s) that arrived from the cloud.")
+
+
+def _run_jobs(runner, jobs, remote: str, base: str, mode: str, dry: bool, backup_dir: Path, log):
     stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     local_backup = Path(backup_dir) / "cloud_overwritten" / stamp
     remote_backup = f"{cs.remote_backup_root(remote, base)}/{device_name()}/{stamp}"
@@ -275,7 +294,8 @@ def sync_from_config(cfg: dict, profiles: dict, resolve, log, mode="both", dry=F
         if jobs:
             log(f"Sync ({mode}{', preview' if dry else ''}) on {device_name()} with {remote}:{base}")
             ok, failed = run_jobs(runner, jobs, remote, base, mode, dry,
-                                  Path(cfg.get("backup_dir") or APP_DIR / "backups"), log)
+                                  Path(cfg.get("backup_dir") or APP_DIR / "backups"), log,
+                                  history=cfg.get("history"))
         else:
             log("No enabled save folder exists on this device.")
         failed += bios_vault_steps(cfg, resolve, log, dry, runner)

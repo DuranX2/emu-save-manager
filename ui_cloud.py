@@ -511,7 +511,8 @@ class CloudSyncDialog(tk.Toplevel):
                 return
             try:
                 ok, failed = autosync.run_jobs(runner, jobs, remote, base, mode, dry,
-                                               self.app.backup_dir, log)
+                                               self.app.backup_dir, log,
+                                               history=self.app.cfg.get("history"))
                 tail = "Cancelled. " if runner.cancelled else ""
                 msg = f"{ok} step(s) OK, {failed} failed" + (" (preview)" if dry else "")
                 log(f"\n{tail}Finished: {msg}.")

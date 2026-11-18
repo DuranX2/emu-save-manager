@@ -9,6 +9,8 @@ save data for PCSX2, Xemu, DuckStation and RetroArch, plus custom emulators.
                       create cards, import / export (.psu), delete
   * BIOS Vault       : your own BIOS files identified by content, kept in one place,
                        synced between devices and installed into each emulator
+  * Save History     : earlier versions of every synced save, kept at each sync;
+                       put back one file or a whole folder as it was at a given time
   * Cloud Sync       : two-way sync with OneDrive (or EmuDeck Cloud) via rclone, using
                        EmuDeck's folder layout so a PC and a Steam Deck share the same saves;
                        optional automatic sync in the background on both
@@ -478,6 +480,7 @@ class App(tk.Tk):
         ttk.Button(top, text="Change…", command=self.change_backup_dir).pack(side="left")
         ttk.Button(top, text="Open", command=self.open_backup_dir).pack(side="left", padx=4)
         ttk.Button(top, text="Cloud Sync…", command=self.open_cloud).pack(side="right")
+        ttk.Button(top, text="Save History…", command=self.open_history).pack(side="right", padx=(6, 0))
         ttk.Button(top, text="BIOS Vault…", command=self.open_bios_vault).pack(side="right", padx=(6, 0))
         ttk.Button(top, text="PS2 Card Manager…", command=self.open_ps2_cards).pack(side="right", padx=6)
 
@@ -824,6 +827,10 @@ class App(tk.Tk):
     def open_cloud(self):
         from ui_cloud import CloudSyncDialog
         CloudSyncDialog(self)
+
+    def open_history(self):
+        from ui_history import SaveHistoryDialog
+        SaveHistoryDialog(self, self.current)
 
     def change_backup_dir(self):
         d = filedialog.askdirectory(parent=self, initialdir=str(self.backup_dir))

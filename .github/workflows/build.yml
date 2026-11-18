@@ -23,13 +23,15 @@ jobs:
       - name: Freeze app
         run: >
           pyinstaller --noconfirm --clean --windowed --name EmuSaveManager
-          --hidden-import ps2mc --hidden-import ps2folder --hidden-import cloudsync --hidden-import autosync --hidden-import biosdb --hidden-import biosdb_data --hidden-import biosvault --hidden-import biostargets --hidden-import ui_biosvault
-          --hidden-import ui_ps2cards --hidden-import ui_cloud
+          --hidden-import ps2mc --hidden-import ps2folder --hidden-import cloudsync --hidden-import autosync --hidden-import exitwatch --hidden-import biosdb --hidden-import biosdb_data --hidden-import biosvault --hidden-import biostargets --hidden-import ui_biosvault
+          --hidden-import ui_ps2cards --hidden-import ui_cloud --hidden-import savehistory --hidden-import ui_history
           emu_save_manager.py
       - name: Build installer
         run: |
           choco install innosetup -y --no-progress
-          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" packaging\installer.iss
+          $ver = "${{ github.ref_name }}".TrimStart("v")
+          if ($ver -notmatch '^\d+(\.\d+)*$') { $ver = "0.0.0" }
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVer=$ver" packaging\installer.iss
       - name: Portable zip
         run: Compress-Archive -Path dist\EmuSaveManager -DestinationPath dist\EmuSaveManager-windows-portable.zip
       - uses: actions/upload-artifact@v4
