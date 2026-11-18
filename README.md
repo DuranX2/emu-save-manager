@@ -52,6 +52,8 @@ Command line (what the scheduler runs): `EmuSaveManager --sync` (add `--dry-run`
 
 On the Steam Deck the app finds EmuDeck's `Emulation/saves/<emulator>/...` folders automatically.
 
+**Empty files never replace real ones.** If the copy on one side is empty (0 bytes) and the other side's file has content, the sync keeps the real one and says so in the log, whichever date is newer. New empty files (some games use them) still sync.
+
 ## Save History
 Every sync keeps earlier versions of the synced saves on that device: once before the sync (what you changed
 by playing there) and once after it (what arrived from the other device). Only changed files are stored, and
