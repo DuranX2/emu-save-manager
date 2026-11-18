@@ -362,18 +362,98 @@ def copy_args(src: str, dst: str, dry_run: bool, backup_dir=None):
     return args
 
 
+def _glob_escape(path: str) -> str:
+    """An rclone filter pattern matching exactly this path (relative to the sync root)."""
+    return "/" + re.sub(r"([\\*?\[\]{}])", r"\\\1", path)
+
+
+def _local_sizes(root: Path, only_empty=False):
+    out = {}
+    root = Path(root)
+    if not root.is_dir():
+        return out
+    for dirpath, _dirs, files in os.walk(root):
+        for f in files:
+            p = Path(dirpath) / f
+            try:
+                size = p.stat().st_size
+            except OSError:
+                continue
+            if only_empty and size:
+                continue
+            out[p.relative_to(root).as_posix()] = size
+    return out
+
+
+def _remote_sizes(runner: RcloneRunner, remote: str, only_empty=False):
+    """{relative path: size} or None when the listing failed.  Missing folder -> {}."""
+    args = ["lsjson", remote, "-R", "--files-only", "--no-mimetype", "--log-level", "ERROR"]
+    if only_empty:
+        args += ["--max-size", "0"]
+    rc, out = runner.capture(args)
+    if rc == 3 or (rc != 0 and "directory not found" in out.lower()):
+        return {}
+    if rc != 0:
+        return None
+    try:
+        items = json.loads(out[out.index("["): out.rindex("]") + 1])
+    except ValueError:
+        return None
+    return {i["Path"]: int(i.get("Size", 0)) for i in items if not i.get("IsDir")}
+
+
+def empty_overwrites(runner: RcloneRunner, direction: str, local: Path, remote: str):
+    """Files that are empty on the sending side but have content on the receiving side.
+    An empty file never replaces a real one (that's how a save gets wiped), so these are
+    left out of the copy.  If a listing fails, every empty file is left out, to be safe."""
+    if direction == "download":
+        empties = _remote_sizes(runner, remote, only_empty=True)
+        if empties is None:
+            return None
+        if not empties:
+            return []
+        dest = _local_sizes(local)
+    else:
+        empties = _local_sizes(local, only_empty=True)
+        if not empties:
+            return []
+        dest = _remote_sizes(runner, remote)
+        if dest is None:
+            return sorted(empties)
+    return sorted(p for p in empties if dest.get(p, 0) > 0)
+
+
 def sync_pair(runner: RcloneRunner, direction: str, local: Path, remote: str,
               dry_run: bool, backup_dir=None) -> str:
     """direction: 'download' (cloud -> PC) or 'upload' (PC -> cloud).
     backup_dir: where replaced files go - a local folder for downloads, a path on the
     same remote ('remote:folder') for uploads.
     Returns 'ok', 'nothing-in-cloud' or 'failed'."""
-    if direction == "download":
-        rc = runner.run(copy_args(remote, str(local), dry_run, backup_dir))
-        if rc == 3:
-            return "nothing-in-cloud"
-    else:
-        rc = runner.run(copy_args(str(local), remote, dry_run, backup_dir))
+    src, dst = (remote, str(local)) if direction == "download" else (str(local), remote)
+    args = copy_args(src, dst, dry_run, backup_dir)
+    keep = empty_overwrites(runner, direction, local, remote)
+    exclude_file = None
+    if keep is None:                                  # couldn't list: hold back all empty files
+        args += ["--min-size", "1B"]
+        runner.log("Empty files are held back this time (the cloud listing failed).")
+    elif keep:
+        fd, exclude_file = tempfile.mkstemp(prefix="esm_keep_", suffix=".txt")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write("\n".join(_glob_escape(p) for p in keep) + "\n")
+        args += ["--exclude-from", exclude_file]
+        where = "on this device" if direction == "download" else "in the cloud"
+        runner.log(f"Protected {len(keep)} file(s) {where}: the incoming copy is empty, so the "
+                   f"real one is kept. First: {keep[0]}")
+    try:
+        rc = runner.run(args)
+    finally:
+        if exclude_file:
+            try:
+                os.unlink(exclude_file)
+            except OSError:
+                pass
+    if direction == "download" and rc == 3:
+        return "nothing-in-cloud"
     return "ok" if rc == 0 else "failed"
 
 
