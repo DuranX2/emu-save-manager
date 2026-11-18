@@ -131,30 +131,187 @@ class Log:
             pass
 
 
-class SyncLock:
-    """Only one sync at a time (window or background)."""
+STOP_FILE = APP_DIR / "autosync.stop"
 
-    def __init__(self, path: Path = LOCK_FILE):
+
+def _boot_id() -> str:
+    """Changes at every restart, so a lock from before a restart is never trusted."""
+    try:
+        if IS_WIN:
+            import ctypes
+            up = ctypes.windll.kernel32.GetTickCount64() / 1000.0
+        else:
+            try:
+                return Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+            except OSError:
+                up = time.monotonic()
+        return str(int((time.time() - up) / 60))          # boot time, to the minute
+    except Exception:  # noqa
+        return ""
+
+
+def _pid_alive(pid: int) -> bool:
+    if not pid or pid <= 0:
+        return False
+    if IS_WIN:
+        try:
+            import ctypes
+            k = ctypes.windll.kernel32
+            h = k.OpenProcess(0x1000, False, pid)            # PROCESS_QUERY_LIMITED_INFORMATION
+            if not h:
+                return False
+            code = ctypes.c_ulong()
+            ok = k.GetExitCodeProcess(h, ctypes.byref(code))
+            k.CloseHandle(h)
+            return bool(ok) and code.value == 259             # STILL_ACTIVE
+        except Exception:  # noqa
+            return True
+    try:
+        os.kill(pid, 0)
+        try:                                                   # a finished process not yet reaped
+            if Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0] == "Z":
+                return False
+        except (OSError, IndexError):
+            pass
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+
+
+def _pid_is_ours(pid: int) -> bool:
+    """Only ever end a process that is this app (never an unrelated program that reused the pid)."""
+    marks = ("emu_save_manager", "emusavemanager", "autosync", "exitwatch")
+    try:
+        if IS_WIN:
+            out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+                                 creationflags=0x08000000, timeout=15).stdout.lower()
+            return any(m in out for m in marks) or "python" in out
+        cmd = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode("utf-8", "replace").lower()
+        return any(m in cmd for m in marks)
+    except Exception:  # noqa
+        return False
+
+
+def _terminate(pid: int):
+    try:
+        if IS_WIN:
+            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, creationflags=0x08000000, timeout=30)
+        else:
+            import signal
+            os.kill(pid, signal.SIGTERM)
+    except Exception:  # noqa
+        pass
+
+
+class SyncLock:
+    """Only one sync at a time (window, background or a restore).  The lock file says who holds
+    it, so a lock left by a sync that died or by a previous boot is cleared at once, and a
+    manual sync can ask a running background sync to stop (request_stop)."""
+
+    def __init__(self, path: Path = LOCK_FILE, kind: str = "background"):
         self.path = path
+        self.kind = kind
         self.held = False
+
+    def owner(self):
+        """{'pid', 'started', 'kind', 'boot'} of the current holder, or None."""
+        try:
+            text = self.path.read_text(encoding="utf-8").strip()
+        except OSError:
+            return None
+        try:
+            info = json.loads(text)
+            if isinstance(info, dict):
+                return info
+        except ValueError:
+            pass
+        parts = text.split()                                   # older format: "pid time"
+        try:
+            return {"pid": int(parts[0]), "started": float(parts[1]), "kind": "background", "boot": None}
+        except (IndexError, ValueError):
+            return {"pid": 0, "started": 0, "kind": "unknown", "boot": None}
+
+    def _stale(self, info) -> bool:
+        try:
+            if time.time() - self.path.stat().st_mtime > LOCK_STALE_SECONDS:
+                return True
+        except OSError:
+            return True
+        if not info:
+            return False
+        if info.get("boot") and info.get("boot") != _boot_id():
+            return True
+        return not _pid_alive(int(info.get("pid") or 0))
 
     def acquire(self) -> bool:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        for _ in range(2):
+        for _ in range(3):
             try:
                 fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
                 with os.fdopen(fd, "w") as f:
-                    f.write(f"{os.getpid()} {time.time()}\n")
+                    json.dump({"pid": os.getpid(), "started": time.time(), "kind": self.kind,
+                               "boot": _boot_id()}, f)
                 self.held = True
                 return True
             except FileExistsError:
-                try:
-                    if time.time() - self.path.stat().st_mtime > LOCK_STALE_SECONDS:
-                        self.path.unlink()           # left behind by a crash
-                        continue
-                except OSError:
+                if self._stale(self.owner()):
+                    try:
+                        self.path.unlink()                     # left behind by a sync that died
+                    except OSError:
+                        pass
                     continue
                 return False
+        return False
+
+    def busy_with(self):
+        """The live holder's info if another sync is running, else None."""
+        info = self.owner()
+        if info is None or self._stale(info):
+            return None
+        return info
+
+    def request_stop(self, timeout: float = 20, log=None) -> bool:
+        """Ask the sync holding the lock to stop, wait for it, end it if it doesn't respond.
+        Returns True once the lock is free."""
+        info = self.busy_with()
+        if not info:
+            return True
+        pid = int(info.get("pid") or 0)
+        try:
+            STOP_FILE.write_text(str(pid), encoding="utf-8")
+        except OSError:
+            pass
+        end = time.time() + timeout
+        while time.time() < end:
+            if not self.busy_with():
+                break
+            time.sleep(0.5)
+        else:
+            if pid and pid != os.getpid() and _pid_alive(pid) and _pid_is_ours(pid):
+                if log:
+                    log("The background sync didn't stop by itself - ending it.")
+                _terminate(pid)
+                for _ in range(20):
+                    if not _pid_alive(pid):
+                        break
+                    time.sleep(0.5)
+        try:
+            STOP_FILE.unlink()
+        except OSError:
+            pass
+        if not self.busy_with():
+            try:
+                if self.path.exists() and self._stale(self.owner()):
+                    self.path.unlink()
+            except OSError:
+                pass
+            return True
         return False
 
     def release(self):
@@ -164,6 +321,26 @@ class SyncLock:
             except OSError:
                 pass
             self.held = False
+
+
+def watch_for_stop(runner, log, interval: float = 1.0):
+    """Background syncs: stop cleanly when the window asks (STOP_FILE names this process).
+    Returns a function that ends the watching."""
+    import threading
+    done = threading.Event()
+
+    def loop():
+        while not done.wait(interval):
+            try:
+                if STOP_FILE.read_text(encoding="utf-8").strip() == str(os.getpid()):
+                    log("Stopping: a manual sync from the window is taking over.")
+                    runner.cancel()
+                    return
+            except OSError:
+                pass
+
+    threading.Thread(target=loop, daemon=True).start()
+    return done.set
 
 
 def write_status(**info):
@@ -288,9 +465,10 @@ def sync_from_config(cfg: dict, profiles: dict, resolve, log, mode="both", dry=F
         log("Skipped: another sync is already running.")
         write_status(result="skipped", message="another sync was running")
         return 3
+    runner = cs.RcloneRunner(exe, conf, log)
+    stop_watching = watch_for_stop(runner, log)
     try:
         jobs = build_jobs(cfg, profiles, resolve)
-        runner = cs.RcloneRunner(exe, conf, log)
         ok = failed = 0
         if jobs:
             log(f"Sync ({mode}{', preview' if dry else ''}) on {device_name()} with {remote}:{base}")
@@ -299,12 +477,19 @@ def sync_from_config(cfg: dict, profiles: dict, resolve, log, mode="both", dry=F
                                   history=cfg.get("history"))
         else:
             log("No enabled save folder exists on this device.")
-        failed += bios_vault_steps(cfg, resolve, log, dry, runner)
+        if not runner.cancelled:
+            failed += bios_vault_steps(cfg, resolve, log, dry, runner)
+        if runner.cancelled:
+            log(f"Stopped early: {ok} step(s) OK, {failed} failed.")
+            write_status(result="stopped", ok=ok, failed=failed,
+                         message="stopped for a manual sync from the window")
+            return 3
         log(f"Finished: {ok} step(s) OK, {failed} failed.")
         write_status(result="ok" if not failed else "failed", ok=ok, failed=failed,
                      message=f"{ok} step(s) OK, {failed} failed" + (" (preview)" if dry else ""))
         return 0 if not failed else 1
     finally:
+        stop_watching()
         lock.release()
 
 
