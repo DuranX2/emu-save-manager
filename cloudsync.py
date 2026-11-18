@@ -440,8 +440,16 @@ class RcloneRunner:
                 pass
 
 
+# Files copied at the same time, and files compared at the same time.  Save folders are mostly
+# many small files (a PCSX2 folder card is hundreds), where OneDrive's per-file overhead dominates,
+# so parallel transfers matter more than bandwidth.  4 is well within OneDrive's limits.
+TRANSFERS = 4
+CHECKERS = 8
+
+
 def copy_args(src: str, dst: str, dry_run: bool, backup_dir=None):
-    args = ["copy", src, dst, "--update", "-v", "--stats", "0", "--transfers", "2"]
+    args = ["copy", src, dst, "--update", "-v", "--stats", "0",
+            "--transfers", str(TRANSFERS), "--checkers", str(CHECKERS)]
     for pat in EXCLUDES:
         args += ["--exclude", pat]
     if dry_run:
