@@ -98,18 +98,43 @@ class CloudSyncDialog(tk.Toplevel):
         ttk.Entry(top, textvariable=self.v_base, width=44).grid(row=3, column=1, sticky="w", padx=6)
         ttk.Label(top, text="Set automatically for EmuDeck Cloud", foreground="#666").grid(row=3, column=2, sticky="e")
 
-        frame = ttk.LabelFrame(self, text="What to sync (double-click a row to switch it on or off)", padding=6)
+        frame = ttk.LabelFrame(self, text="What to sync (tap ✓ / ✗ to switch a row on or off)", padding=6)
         frame.pack(fill="x", padx=10)
         cols = ("sync", "emu", "loc", "local", "cloud")
-        self.tree = ttk.Treeview(frame, columns=cols, show="headings", height=4 if self.compact else 7,
-                                 selectmode="browse")
+        style = ttk.Style(self)
+        if self.compact:                       # bigger rows and scrollbar for the Deck's touchscreen
+            style.configure("Deck.Treeview", rowheight=30)
+            style.configure("Deck.Vertical.TScrollbar", arrowsize=26, width=26)
+        tf = ttk.Frame(frame)
+        tf.pack(fill="x")
+        self.tree = ttk.Treeview(tf, columns=cols, show="headings", height=4 if self.compact else 7,
+                                 selectmode="browse", style="Deck.Treeview" if self.compact else "Treeview")
         for c, text, w in (("sync", "Sync", 50), ("emu", "Emulator", 100), ("loc", "Location", 110),
                            ("local", "This PC", 340), ("cloud", "Cloud folder", 260)):
             self.tree.heading(c, text=text)
             self.tree.column(c, width=w, anchor="center" if c == "sync" else "w")
-        self.tree.pack(fill="x")
+        self.tree_sb = ttk.Scrollbar(tf, orient="vertical", command=self.tree.yview,
+                                     style="Deck.Vertical.TScrollbar" if self.compact else "Vertical.TScrollbar")
+        self.tree.configure(yscrollcommand=self.tree_sb.set)
+        self.tree_sb.pack(side="right", fill="y")
+        self.tree.pack(side="left", fill="x", expand=True)
         self.tree.bind("<Double-1>", self._toggle)
-        ttk.Button(frame, text="Edit cloud folder…", command=self._edit_remote).pack(anchor="w", pady=(6, 0))
+        self.tree.bind("<ButtonPress-1>", self._tree_press, add="+")
+        self.tree.bind("<B1-Motion>", self._tree_drag, add="+")
+        self.tree.bind("<ButtonRelease-1>", self._tree_release, add="+")
+        self.tree.bind("<space>", lambda e: self._toggle_selected())
+        self.tree.bind("<Return>", lambda e: self._toggle_selected())
+        for seq, step in (("<Button-4>", -1), ("<Button-5>", 1)):          # wheel / trackpad on Linux
+            self.tree.bind(seq, lambda e, s=step: (self.tree.yview_scroll(s, "units"), "break")[1])
+        self.tree.bind("<MouseWheel>", lambda e: (self.tree.yview_scroll(-1 if e.delta > 0 else 1, "units"),
+                                                  "break")[1])
+        self._drag = None
+        fb = ttk.Frame(frame)
+        fb.pack(fill="x", pady=(6, 0))
+        ttk.Button(fb, text="Switch on / off", command=self._toggle_selected).pack(side="left")
+        ttk.Button(fb, text="All on", command=lambda: self._set_all(True)).pack(side="left", padx=(8, 0))
+        ttk.Button(fb, text="All off", command=lambda: self._set_all(False)).pack(side="left", padx=(8, 0))
+        ttk.Button(fb, text="Edit cloud folder…", command=self._edit_remote).pack(side="left", padx=(16, 0))
 
         act = ttk.Frame(self, padding=(10, 8))
         act.pack(fill="x")
@@ -524,11 +549,59 @@ class CloudSyncDialog(tk.Toplevel):
                                     f"{base}/{p['sub']}"))
 
     def _toggle(self, event):
+        if self._drag and self._drag.get("moved"):
+            return
         key = self.tree.identify_row(event.y)
-        if key:
-            self.pairs[key]["enabled"] = not self.pairs[key]["enabled"]
-            self._refresh_row(key)
-            self._save()
+        if key and self.tree.identify_column(event.x) != "#1":   # a tap on ✓ / ✗ already switched it
+            self._flip(key)
+
+    def _flip(self, key):
+        self.pairs[key]["enabled"] = not self.pairs[key]["enabled"]
+        self._refresh_row(key)
+        self._save()
+
+    def _toggle_selected(self):
+        sel = self.tree.selection()
+        if not sel:
+            messagebox.showinfo("What to sync", "Select a row first.", parent=self)
+            return "break"
+        self._flip(sel[0])
+        return "break"
+
+    def _set_all(self, on):
+        for key, p in self.pairs.items():
+            if p["enabled"] != on:
+                p["enabled"] = on
+                self._refresh_row(key)
+        self._save()
+
+    # Touchscreens send a press, motion and release rather than wheel events, so dragging a finger
+    # over the list scrolls it, and a tap (no drag) on the Sync column switches that row.
+    ROW_DRAG = 24
+
+    def _tree_press(self, event):
+        self._drag = {"y": event.y, "moved": False, "row": self.tree.identify_row(event.y),
+                      "col": self.tree.identify_column(event.x),
+                      "heading": self.tree.identify_region(event.x, event.y) == "heading"}
+
+    def _tree_drag(self, event):
+        d = self._drag
+        if not d or d["heading"]:
+            return
+        dy = event.y - d["y"]
+        if abs(dy) >= self.ROW_DRAG:
+            rows = int(dy / self.ROW_DRAG)
+            self.tree.yview_scroll(-rows, "units")
+            d["y"] += rows * self.ROW_DRAG
+            d["moved"] = True
+        if d["moved"]:
+            return "break"                   # don't drag the selection along with the finger
+
+    def _tree_release(self, event):
+        d = self._drag
+        if d and not d["moved"] and not d["heading"] and d["col"] == "#1" and d["row"] \
+                and d["row"] == self.tree.identify_row(event.y):
+            self._flip(d["row"])
 
     def _edit_remote(self):
         sel = self.tree.selection()
