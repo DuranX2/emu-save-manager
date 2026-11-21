@@ -151,6 +151,30 @@ Folder cards are written the way PCSX2 writes them (`_pcsx2_index` timestamps an
 running game's saves from a folder card, so the 8 MB limit applies per game, not to the whole card.
 A folder card PCSX2 created but never formatted is formatted automatically when saves are added.
 
+## ROM Library (preview)
+
+A second app that comes with the save manager: keep your whole ROM collection in one place (a drive
+shared from another computer, a NAS, or any drive) and **check games out** to whichever machine you're
+playing on, then **check them in** when you're done to free the space. Open it from the Start menu or
+the application menu (**ROM Library**), or run `EmuSaveManager --rom-library`.
+
+- **The library** is a folder laid out like EmuDeck's ROM folder: one folder per system (`ps2`, `gc`,
+  `xbox`...), games inside. Copy your existing `Emulation/roms` folder there as it is.
+- **Where it can be:** on Windows, a network path such as `\\NUC\Games\roms` (signs in with Windows'
+  saved login); on the Steam Deck, *Network share* in Settings signs in with a username and password
+  (kept scrambled in the app's own rclone config). A local or mounted drive works too.
+- **Check out** copies a game into this machine's ROM folder (`Emulation/roms/<system>`), so ES-DE and
+  Steam ROM Manager find it. Transfers queue up, show progress, and resume if the app is closed part-way.
+  There's a space check first, and 2 GB is always left free.
+- **Check in** removes the local copy, but only after checking the library has an identical copy.
+  Games that are only on this machine can be copied up with **Add to library**. Saves are separate
+  (the save manager syncs them), so checking a game in never touches your progress.
+- **Every machine sees the same library.** Favourites, and which machine has which game checked out,
+  are kept in a `.library` folder inside the library. The app never renames, moves or deletes anything
+  else in the library.
+- Disc sets (`.m3u` + `.cue`/`.bin`), PS3 and Wii U game folders, and category subfolders are each
+  treated as one game.
+
 ## Building installable packages (no Python needed on the target)
 PyInstaller can't cross-compile, so each OS is built on that OS:
 - **Windows**: run `build_windows.bat` -> `dist\EmuSaveManager-Setup.exe` (needs Inno Setup 6) and a portable folder.

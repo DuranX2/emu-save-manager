@@ -429,16 +429,21 @@ class RcloneRunner:
         self._proc = None
         return rc
 
-    def capture(self, args):
-        """Run rclone quietly; returns (exit code, output text).  Output is not logged."""
+    def capture(self, args, timeout=120, merge=True):
+        """Run rclone quietly; returns (exit code, output text).  Output is not logged.
+        With merge=False only stdout is returned when rclone succeeds (warnings on stderr would
+        corrupt JSON); on failure stderr is appended so the error can be shown."""
         cmd = [self.exe] + (["--config", self.conf] if self.conf else []) + list(args)
         kw = {"creationflags": 0x08000000} if IS_WIN else {}
         try:
-            r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            r = subprocess.run(cmd, stdout=subprocess.PIPE,
+                               stderr=subprocess.STDOUT if merge else subprocess.PIPE,
                                stdin=subprocess.DEVNULL, text=True, encoding="utf-8",
-                               errors="replace", timeout=120, **kw)
+                               errors="replace", timeout=timeout, **kw)
         except (OSError, subprocess.TimeoutExpired) as ex:
             return 127, str(ex)
+        if not merge and r.returncode != 0:
+            return r.returncode, (r.stdout or "") + (r.stderr or "")
         return r.returncode, r.stdout
 
     def cancel(self):
