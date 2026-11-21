@@ -1040,6 +1040,10 @@ if __name__ == "__main__":
         import steamshortcut
         sys.exit(steamshortcut.cli("add" if "--add-to-steam" in sys.argv else "remove",
                                    assume_yes="--yes" in sys.argv))
+    if "--rom-library" in sys.argv:     # the ROM Library app (same program, its own window and shortcuts)
+        import ui_library
+        ui_library.main()
+        sys.exit(0)
     if "--bios-scan" in sys.argv:       # identify BIOS files in a folder, change nothing
         import biosvault
         folder = sys.argv[sys.argv.index("--bios-scan") + 1:] or ["."]

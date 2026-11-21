@@ -11,6 +11,7 @@ DEST="$DATA/EmuSaveManager"
 APPS="$DATA/applications"
 ICONS="$DATA/icons/hicolor"
 DESKTOP="$APPS/emu-save-manager.desktop"
+LIBDESKTOP="$APPS/rom-library.desktop"
 SIZES="16 32 48 64 128 256"
 
 if [ "${1:-}" = "--remove" ]; then
@@ -21,10 +22,11 @@ if [ "${1:-}" = "--remove" ]; then
   rm -f "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/emu-save-manager-sync."{timer,service} \
         "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/emu-save-manager-watch.service"
   systemctl --user daemon-reload >/dev/null 2>&1 || true
-  rm -rf "$DEST" "$DESKTOP" "$HOME/.local/bin/emu-save-manager" "$HOME/Desktop/Emulator Save Manager.desktop"
+  rm -rf "$DEST" "$DESKTOP" "$LIBDESKTOP" "$HOME/.local/bin/emu-save-manager" "$HOME/.local/bin/rom-library" \
+         "$HOME/Desktop/Emulator Save Manager.desktop" "$HOME/Desktop/ROM Library.desktop"
   for s in $SIZES; do rm -f "$ICONS/${s}x${s}/apps/emu-save-manager.png"; done
   command -v update-desktop-database >/dev/null && update-desktop-database "$APPS" || true
-  echo "Removed. Settings/backups remain in ~/.emu_save_manager"
+  echo "Removed. Settings/backups remain in ~/.emu_save_manager (ROM Library settings in ~/.emu_rom_library)"
   exit 0
 fi
 
@@ -33,6 +35,8 @@ rm -rf "$DEST"; mkdir -p "$DEST" "$APPS" "$HOME/.local/bin"
 cp -r "$HERE/app/." "$DEST/"
 chmod +x "$DEST/EmuSaveManager"
 ln -sf "$DEST/EmuSaveManager" "$HOME/.local/bin/emu-save-manager"
+printf '#!/bin/sh\nexec "%s/EmuSaveManager" --rom-library "$@"\n' "$DEST" > "$HOME/.local/bin/rom-library"
+chmod +x "$HOME/.local/bin/rom-library"
 
 # icon for the application menu and the desktop shortcut
 ART=""
@@ -58,10 +62,24 @@ Terminal=false
 Categories=Game;Utility;
 EOF
 chmod +x "$DESKTOP"
+cat > "$LIBDESKTOP" <<EOF
+[Desktop Entry]
+Type=Application
+Name=ROM Library
+Comment=Check games out of your ROM library and back in
+Exec="$DEST/EmuSaveManager" --rom-library
+Icon=$ICON
+Terminal=false
+Categories=Game;Utility;
+EOF
+chmod +x "$LIBDESKTOP"
 command -v update-desktop-database >/dev/null && update-desktop-database "$APPS" || true
 
 # Steam Deck: also put a shortcut on the Desktop (Desktop Mode).
-if [ -d "$HOME/Desktop" ]; then cp "$DESKTOP" "$HOME/Desktop/Emulator Save Manager.desktop"; chmod +x "$HOME/Desktop/Emulator Save Manager.desktop"; fi
+if [ -d "$HOME/Desktop" ]; then
+  cp "$DESKTOP" "$HOME/Desktop/Emulator Save Manager.desktop"; chmod +x "$HOME/Desktop/Emulator Save Manager.desktop"
+  cp "$LIBDESKTOP" "$HOME/Desktop/ROM Library.desktop"; chmod +x "$HOME/Desktop/ROM Library.desktop"
+fi
 
 echo "Installed to $DEST"
 echo "Start it from the application menu (Games or Utilities) or the Desktop shortcut."

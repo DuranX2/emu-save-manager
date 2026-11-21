@@ -12,7 +12,7 @@ pip install --upgrade pip pyinstaller
 
 pyinstaller --noconfirm --clean --windowed --name EmuSaveManager --add-data "packaging/art:art" \
   --hidden-import ps2mc --hidden-import ps2folder --hidden-import cloudsync --hidden-import autosync --hidden-import exitwatch --hidden-import biosdb --hidden-import biosdb_data --hidden-import biosvault --hidden-import biostargets --hidden-import ui_biosvault \
-  --hidden-import ui_ps2cards --hidden-import ui_cloud --hidden-import savehistory --hidden-import ui_history --hidden-import syncplan --hidden-import steamshortcut \
+  --hidden-import ui_ps2cards --hidden-import ui_cloud --hidden-import savehistory --hidden-import ui_history --hidden-import syncplan --hidden-import steamshortcut --hidden-import romlibrary --hidden-import libqueue --hidden-import ui_library \
   emu_save_manager.py
 
 PKG=dist/EmuSaveManager-linux
