@@ -11,8 +11,10 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 import cloudsync
+import libmeta as M
 import libqueue as Q
 import romlibrary as L
+import ui_covers as C
 
 APP_NAME = "ROM Library"
 SYSTEM = platform.system()
@@ -94,6 +96,14 @@ class LibraryApp(tk.Tk):
         self._q_seen = -1
         self._job_states = {}
         self._indexing = False
+        self.meta = None                     # game information and artwork (libmeta.MetaStore)
+        self.view = self.cfg.get("view", "covers")
+        self.tile_w = 140 if self.compact else 150
+        self.images = C.ImageCache(self, self.tile_w, int(self.tile_w * 1.4))
+        self.scraper = None
+        self.scrape_status = ""
+        self.artwork_dialog = None
+        self._esde = None
         self._build()
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self.after(200, self._poll)
@@ -126,6 +136,7 @@ class LibraryApp(tk.Tk):
         self.loc_label = ttk.Label(top, text="(not set)", foreground="#444")
         self.loc_label.pack(side="left", padx=(4, 12))
         ttk.Button(top, text="Settings…", command=self.open_settings).pack(side="right")
+        ttk.Button(top, text="Artwork…", command=self.open_artwork).pack(side="right", padx=(0, 8))
         self.refresh_btn = ttk.Button(top, text="Refresh", command=self.refresh)
         self.refresh_btn.pack(side="right", padx=(0, 8))
 
@@ -141,6 +152,11 @@ class LibraryApp(tk.Tk):
         cb = ttk.Combobox(bar, textvariable=self.v_filter, values=FILTERS, state="readonly", width=22)
         cb.pack(side="left", padx=4)
         cb.bind("<<ComboboxSelected>>", lambda e: self.fill_games())
+        ttk.Label(bar, text="View:").pack(side="left", padx=(14, 4))
+        self.v_view = tk.StringVar(value=self.view)
+        for val, text in (("covers", "Covers"), ("list", "List")):
+            ttk.Radiobutton(bar, text=text, value=val, variable=self.v_view, style="Toolbutton",
+                            command=lambda: self.set_view(self.v_view.get())).pack(side="left")
         self.count_label = ttk.Label(bar, text="", foreground="#555")
         self.count_label.pack(side="right")
 
@@ -162,8 +178,9 @@ class LibraryApp(tk.Tk):
         pane.add(left, weight=1)
 
         right = ttk.Frame(pane)
+        self.list_frame = ttk.Frame(right)
         cols = ("fav", "title", "system", "size", "status")
-        self.tree = ttk.Treeview(right, columns=cols, show="headings", selectmode="extended",
+        self.tree = ttk.Treeview(self.list_frame, columns=cols, show="headings", selectmode="extended",
                                  style="Lib.Treeview")
         for c, text, w, anchor in (("fav", "★", 34, "center"), ("title", "Game", 360, "w"),
                                    ("system", "System", 130, "w"), ("size", "Size", 90, "e"),
@@ -172,19 +189,25 @@ class LibraryApp(tk.Tk):
             self.tree.column(c, width=w, anchor=anchor, stretch=c in ("title", "status"))
         for tag, color in COLORS.items():
             self.tree.tag_configure(tag, foreground=color)
-        gsb = ttk.Scrollbar(right, orient="vertical", command=self.tree.yview, style=sbstyle)
+        gsb = ttk.Scrollbar(self.list_frame, orient="vertical", command=self.tree.yview, style=sbstyle)
         self.tree.configure(yscrollcommand=gsb.set)
         gsb.pack(side="right", fill="y")
         self.tree.pack(side="left", fill="both", expand=True)
         self.tree.bind("<<TreeviewSelect>>", lambda e: self._update_selection())
         self.tree.bind("<Double-1>", lambda e: self.show_details())
         self.games_touch = TouchScroll(self.tree)
+        self.grid_view = C.CoverGrid(right, self, self.tile_w)
         pane.add(right, weight=4)
+        self.details_w = 300 if self.compact else 340
+        self.details = C.DetailsPanel(pane, self, width=self.details_w)
+        pane.add(self.details, weight=0)
         self.pane = pane
-        self.after(150, lambda: pane.sashpos(0, 300 if self.compact else 290))
+        self.set_view(self.view, refill=False)
+        self.after(150, self._place_sashes)
 
         act = ttk.Frame(self, padding=(10, 6))
         act.pack(fill="x")
+        self.act = act
         self.btn_out = ttk.Button(act, text="⬇ Check out", command=self.check_out)
         self.btn_in = ttk.Button(act, text="⬆ Check in", command=self.check_in)
         self.btn_add = ttk.Button(act, text="Add to library", command=self.add_to_library)
@@ -197,6 +220,7 @@ class LibraryApp(tk.Tk):
 
         tf = ttk.LabelFrame(self, text="Transfers", padding=6)
         tf.pack(fill="x", padx=10)
+        self.tf = tf
         qcols = ("game", "action", "progress", "status")
         self.qtree = ttk.Treeview(tf, columns=qcols, show="headings", height=3 if self.compact else 4,
                                   selectmode="browse", style="Lib.Treeview")
@@ -221,6 +245,7 @@ class LibraryApp(tk.Tk):
 
         bottom = ttk.Frame(self, padding=(10, 6, 10, 8))
         bottom.pack(fill="x")
+        self.bottom = bottom
         self.space_bar = ttk.Progressbar(bottom, length=180, maximum=100)
         self.space_bar.pack(side="left")
         self.space_label = ttk.Label(bottom, text="")
@@ -228,6 +253,142 @@ class LibraryApp(tk.Tk):
         self.status = ttk.Label(bottom, text="", foreground="#555")
         self.status.pack(side="right")
         self._update_selection()
+        self._arrange()
+
+    def _arrange(self):
+        """Hide what isn't needed: the button row in the cover view (the details panel has the buttons),
+        and the transfers panel while nothing is queued."""
+        busy = bool(self.q and self.q.snapshot())
+        for w in (self.act, self.tf):
+            w.pack_forget()
+        if self.view == "list":
+            self.act.pack(fill="x", before=self.bottom)
+        if busy:
+            self.tf.pack(fill="x", padx=10, before=self.bottom)
+
+    def _place_sashes(self):
+        try:
+            self.pane.sashpos(0, 230 if self.compact else 260)
+            w = self.pane.winfo_width()
+            if w > 600:
+                self.pane.sashpos(1, w - self.details_w - 20)
+        except tk.TclError:
+            pass
+
+    def set_view(self, view, refill=True):
+        keep = self.selected() if refill else []
+        self.view = view
+        self.v_view.set(view)
+        if view == "covers":
+            self.list_frame.pack_forget()
+            self.grid_view.pack(fill="both", expand=True)
+        else:
+            self.grid_view.pack_forget()
+            self.list_frame.pack(fill="both", expand=True)
+        if self.cfg.get("view") != view:
+            self.cfg["view"] = view
+            try:
+                L.save_config(self.cfg)
+            except OSError:
+                pass
+        if hasattr(self, "bottom"):
+            self._arrange()
+        if refill:
+            self.fill_games()
+            self._select(keep)
+
+    def _select(self, keys):
+        if self.view == "covers":
+            self.grid_view.set_selection(keys)
+            if keys:
+                self.grid_view.see(keys[0])
+        else:
+            keys = [k for k in keys if self.tree.exists(k)]
+            self.tree.selection_set(keys)
+            if keys:
+                self.tree.see(keys[0])
+        self._update_selection()
+
+    # ------------------------------------------------------------------ artwork
+    def display_title(self, key):
+        rec = self.meta.get(key) if self.meta else {}
+        return rec.get("title") or self.lib.get(key).title
+
+    def active_job(self, key):
+        return self._active_job(key)
+
+    def on_image(self, key):
+        if self.view == "covers":
+            self.grid_view.draw()
+        if self.details.key == key:
+            self.details.show([key])
+
+    def on_grid_select(self):
+        self._update_selection()
+
+    def on_grid_double(self):
+        keys = self.selected()
+        if len(keys) == 1:
+            self.show_details()
+
+    def esde_source(self):
+        if self._esde is None:
+            self._esde = M.EsdeSource()
+        return self._esde
+
+    def can_match(self):
+        return M.ScreenScraperSource(M.load_ss_creds()).available
+
+    def open_artwork(self):
+        if not self.lib:
+            return
+        if self.artwork_dialog and self.artwork_dialog.winfo_exists():
+            self.artwork_dialog.lift()
+            return
+        C.ArtworkDialog(self)
+
+    def scraping(self):
+        return bool(self.scraper and self.scraper.thread and self.scraper.thread.is_alive())
+
+    def start_scrape(self, keys, esde=True, ss=True, lr=True, refresh=False):
+        if self.scraping() or not self.meta:
+            return
+        self._esde = None                      # look again: the user may have just scraped in ES-DE
+        sources = []
+        if esde:
+            sources.append(self.esde_source())
+        if ss:
+            sources.append(M.ScreenScraperSource(M.load_ss_creds()))
+        if lr:
+            sources.append(M.LibretroSource())
+        if not any(src.available for src in sources):
+            messagebox.showinfo(APP_NAME, "No source is available: switch one on, or enter your ScreenScraper "
+                                "details.", parent=self)
+            return
+
+        def progress(done, total, msg):
+            self.events.put(("scrape", done, total, msg))
+        self.scraper = M.Scraper(self.meta, sources, keys, progress=progress, refresh=refresh).start()
+
+    def stop_scrape(self):
+        if self.scraper:
+            self.scraper.cancel()
+
+    def _scrape_progress(self, done, total, msg):
+        self.scrape_status = f"Artwork: {done} of {total} · {msg}" if done < total else msg
+        self.set_status(self.scrape_status)
+        if self.artwork_dialog and self.artwork_dialog.winfo_exists():
+            self.artwork_dialog.update_progress(done, total, msg)
+        if done == total or done % 10 == 0:
+            self.images.forget()
+            self.refresh_meta_views()
+
+    def refresh_meta_views(self, keys=None):
+        if self.view == "covers":
+            self.grid_view.draw()
+        else:
+            self.refresh_rows(keys)
+        self.details.show(self.selected())
 
     # ------------------------------------------------------------------ library
     def start_library(self):
@@ -248,6 +409,9 @@ class LibraryApp(tk.Tk):
         runner = cloudsync.RcloneRunner(exe, L.rclone_conf(), lambda m: None)
         local = self.cfg.get("local_roms") or L.default_local_roms()
         self.lib = L.Library(runner, loc, local, label=self.cfg.get("machine_label") or "")
+        self.meta = M.MetaStore(self.lib)
+        self.meta.load_local_copy()
+        self.images.forget()
         if self.lib.load_cache():
             self.lib.refresh_local()
             self.fill_all()
@@ -263,9 +427,15 @@ class LibraryApp(tk.Tk):
         self.set_status("Reading the library… (a big library can take a minute or two)")
         lib = self.lib
 
+        meta = self.meta
+
         def work():
             try:
                 lib.refresh()
+                try:
+                    meta.load()
+                except Exception:  # noqa - artwork is optional
+                    pass
                 self.events.put(("indexed", lib, ""))
             except Exception as ex:  # noqa
                 self.events.put(("indexed", lib, str(ex)))
@@ -282,6 +452,7 @@ class LibraryApp(tk.Tk):
                                  "Check that the drive or share is reachable, and the location in Settings.",
                                  parent=self)
             return
+        self.images.forget()                   # pictures may have arrived from another machine
         self.fill_all()
         n = len(lib.items)
         self.set_status(f"Library read: {n} games.")
@@ -372,7 +543,9 @@ class LibraryApp(tk.Tk):
         if self.system_sel != ALL and it.system != self.system_sel:
             return False
         if words:
-            hay = (it.title + " " + it.path).lower()
+            rec = self.meta.get(key) if self.meta else {}
+            hay = " ".join((it.title, it.path, rec.get("title", ""), rec.get("genre", ""),
+                            rec.get("developer", ""), rec.get("publisher", ""), rec.get("year", ""))).lower()
             if not all(w in hay for w in words):
                 return False
         if flt == FILTERS[0]:
@@ -399,14 +572,18 @@ class LibraryApp(tk.Tk):
         words = [w for w in self.v_search.get().lower().split() if w]
         keys = [k for k in lib.all_keys() if self._matches(k, flt, words)]
         keys = self._sorted(keys)
-        sel = set(self.tree.selection())
+        sel = set(self.selected())
         self.tree.delete(*self.tree.get_children())
-        for k in keys:
-            values, tags = self._row(k)
-            self.tree.insert("", "end", iid=k, values=values, tags=tags)
-        keep = [k for k in keys if k in sel]
-        if keep:
-            self.tree.selection_set(keep)
+        if self.view == "list":
+            for k in keys:
+                values, tags = self._row(k)
+                self.tree.insert("", "end", iid=k, values=values, tags=tags)
+            keep = [k for k in keys if k in sel]
+            if keep:
+                self.tree.selection_set(keep)
+        else:
+            self.grid_view.set_keys(keys)
+            self.grid_view.set_selection([k for k in keys if k in sel], notify=False)
         total = sum(lib.get(k).size for k in keys)
         self.count_label.config(text=f"{len(keys)} games · {L.human(total)}")
         self._update_selection()
@@ -417,14 +594,14 @@ class LibraryApp(tk.Tk):
         if col == "size":
             f = lambda k: lib.get(k).size
         elif col == "title":
-            f = lambda k: lib.get(k).title.lower()
+            f = lambda k: self.display_title(k).lower()
         elif col == "status":
             order = {"here": 0, "partial": 1, "local_only": 2, "not_here": 3}
             f = lambda k: (order[lib.status(k)[0]], lib.get(k).title.lower())
         elif col == "fav":
             f = lambda k: (not lib.is_favourite(k), lib.get(k).title.lower())
         else:
-            f = lambda k: (L.system_name(lib.get(k).system).lower(), lib.get(k).title.lower())
+            f = lambda k: (L.system_name(lib.get(k).system).lower(), self.display_title(k).lower())
         return sorted(keys, key=f, reverse=self.sort_rev)
 
     def _sort(self, col):
@@ -437,17 +614,25 @@ class LibraryApp(tk.Tk):
     def refresh_rows(self, keys=None):
         if not self.lib:
             return
+        if self.view == "covers":
+            self.grid_view.draw()
+            if self.details.key and (keys is None or self.details.key in keys):
+                self.details.show([self.details.key])
+            return
         for k in (keys if keys is not None else self.tree.get_children()):
             if self.tree.exists(k) and self.lib.get(k):
                 values, tags = self._row(k)
                 self.tree.item(k, values=values, tags=tags)
 
     def selected(self):
-        return [k for k in self.tree.selection() if self.lib and self.lib.get(k)]
+        keys = self.grid_view.sel if self.view == "covers" else self.tree.selection()
+        return [k for k in keys if self.lib and self.lib.get(k)]
 
     def _update_selection(self):
         keys = self.selected()
         lib = self.lib
+        if lib:
+            self.details.show(keys)
         if not keys:
             self.sel_label.config(text="Select games (Ctrl or Shift for several)")
             for b in (self.btn_out, self.btn_in, self.btn_add, self.btn_fav, self.btn_info):
@@ -555,6 +740,8 @@ class LibraryApp(tk.Tk):
     # ------------------------------------------------------------------ transfers, space, status
     def fill_queue(self):
         jobs = self.q.snapshot() if self.q else []
+        if bool(jobs) != bool(self.tf.winfo_ismapped()):
+            self._arrange()
         have = set(self.qtree.get_children())
         ids = []
         for j in jobs:
@@ -606,6 +793,8 @@ class LibraryApp(tk.Tk):
                 ev = self.events.get_nowait()
                 if ev[0] == "indexed":
                     self._indexed(ev[1], ev[2])
+                elif ev[0] == "scrape":
+                    self._scrape_progress(*ev[1:])
                 elif ev[0] == "call":
                     ev[1]()
                 elif ev[0] == "log":
@@ -661,6 +850,9 @@ class LibraryApp(tk.Tk):
                 return
         if self.q:
             self.q.stop(wait=3)
+        if self.scraping():
+            self.scraper.cancel()
+            self.scraper.thread.join(10)       # it writes what it found before stopping
         self.destroy()
 
 
