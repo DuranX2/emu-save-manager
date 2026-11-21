@@ -174,6 +174,19 @@ the application menu (**ROM Library**), or run `EmuSaveManager --rom-library`.
   else in the library.
 - Disc sets (`.m3u` + `.cue`/`.bin`), PS3 and Wii U game folders, and category subfolders are each
   treated as one game.
+- **Covers and game information.** The library opens as a grid of box art (or a list, if you prefer),
+  with a details panel: cover, release date, genre, players, developer, description and a screenshot.
+  **Artwork…** fills in what's missing, from these sources in order:
+  - **ES-DE on this machine:** anything you've already scraped in ES-DE (its gamelists and
+    `Emulation/tools/downloaded_media`). Run it on the machine where you scraped.
+  - **ScreenScraper:** your screenscraper.fr account plus a developer ID (request one on their forum).
+    Both are kept only on that machine, in `~/.emu_rom_library/screenscraper.json`, never in the library.
+    The daily limit is respected, and games with no match aren't asked about again for 30 days.
+    If a game is matched wrong, **Wrong game? Find the right one…** lets you pick it.
+  - **libretro thumbnails:** free box art and screenshots, no account needed.
+
+  Everything found is stored once in the library's `.library` folder (covers shrunk to a sensible
+  size), so every machine shows the same artwork. Only artwork and text are downloaded, never games.
 
 ## Building installable packages (no Python needed on the target)
 PyInstaller can't cross-compile, so each OS is built on that OS:

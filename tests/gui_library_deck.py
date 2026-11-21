@@ -17,7 +17,7 @@ for i in range(60):
     p = lib / ("ps2" if i % 3 else "gc") / f"Game {i:02d} (USA).iso"; p.parent.mkdir(parents=True, exist_ok=True)
     with open(p, "wb") as f: f.truncate(1024 * 1024 * (i + 1))
 local.mkdir(parents=True)
-cfg = L.load_config(); cfg.update(library=str(lib), local_roms=str(local), machine_label="Steam Deck")
+cfg = L.load_config(); cfg.update(library=str(lib), local_roms=str(local), machine_label="Steam Deck", view="list")
 app = U.LibraryApp(cfg=cfg)
 def pump(sec=0.3):
     end = time.time() + sec

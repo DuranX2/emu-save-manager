@@ -59,7 +59,7 @@ def wait(app, cond, sec=30):
     return False
 
 # 1. first run: no library set -> Settings opens; fill it in and save
-app = U.LibraryApp(cfg=L.load_config())
+app = U.LibraryApp(cfg=dict(L.load_config(), view="list"))
 pump(app, 0.6)
 dlg = [w for w in app.winfo_children() if isinstance(w, U.SettingsDialog)]
 assert dlg, "first run opens Settings"
