@@ -43,5 +43,14 @@ Name: "{autodesktop}\ROM Library"; Filename: "{app}\{#AppExe}"; Parameters: "--r
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent
+; The app's Update button runs Setup with /SILENT /RELAUNCH=1: start the app again afterwards.
+Filename: "{app}\{#AppExe}"; Flags: nowait runasoriginaluser; Check: RelaunchAfterUpdate
 
 ; Settings and backups live in %USERPROFILE%\.emu_save_manager and are intentionally kept on uninstall.
+
+[Code]
+function RelaunchAfterUpdate: Boolean;
+begin
+  Result := WizardSilent and (ExpandConstant('{param:RELAUNCH|0}') = '1');
+end;
+

@@ -48,7 +48,8 @@ def snapshot() -> dict:
 def pretty(name: str) -> str:
     n = name.lower()
     for key, label in (("pcsx2", "PCSX2"), ("duckstation", "DuckStation"), ("retroarch", "RetroArch"),
-                       ("xemu", "xemu"), ("dolphin", "Dolphin"), ("yuzu", "Yuzu"), ("azahar", "Azahar"),
+                       ("xemu", "xemu"), ("primehack", "PrimeHack"), ("dolphin", "Dolphin"),
+                       ("cemu", "Cemu"), ("yuzu", "Yuzu"), ("azahar", "Azahar"),
                        ("melonds", "melonDS"), ("ppsspp", "PPSSPP"), ("rpcs3", "RPCS3"),
                        ("xenia", "Xenia"), ("es-de", "ES-DE"),
                        ("emulationstatio", "ES-DE")):
@@ -194,6 +195,18 @@ def enable_watch() -> str:
                 raise OSError(f"systemctl --user {' '.join(args)} failed: {out}")
         return f"systemd user service '{WATCH_UNIT}', running now and at every login"
     raise OSError("Sync-on-exit is only available on Windows and Linux / Steam Deck.")
+
+
+def ensure_running(cfg: dict) -> bool:
+    """Windows: start the watcher if sync-on-exit is on but it isn't running (for example after
+    an update closed it). Linux's systemd service restarts by itself. True if one was started."""
+    if not autosync.IS_WIN or not any(options(cfg).values()) or watcher_running():
+        return False
+    try:
+        _start_detached(watch_command())
+        return True
+    except OSError:
+        return False
 
 
 def disable_watch():

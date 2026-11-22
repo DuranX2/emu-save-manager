@@ -33,15 +33,17 @@ jobs:
         run: python -m pip install --verbose --no-binary=pyinstaller "pyinstaller>=6.10,<7"
       - name: Install Pillow (cover pictures in the ROM Library)
         run: python -m pip install "pillow>=10"
-      - name: Windows version details for the exe
-        run: python packaging/make_version_info.py "$env:APP_VER" build/version_info.txt
+      - name: Windows version details for the exe, and the version the update check compares
+        run: |
+          python packaging/make_version_info.py "$env:APP_VER" build/version_info.txt
+          Set-Content -Path build/app_version.txt -Value "$env:APP_VER" -NoNewline -Encoding ascii
       - name: Freeze app
         run: >
           pyinstaller --noconfirm --clean --windowed --noupx --name EmuSaveManager
           --version-file build/version_info.txt
-          --icon packaging/art/emu-save-manager.ico --add-data "packaging/art;art"
+          --icon packaging/art/emu-save-manager.ico --add-data "packaging/art;art" --add-data "build/app_version.txt;."
           --hidden-import ps2mc --hidden-import ps2folder --hidden-import cloudsync --hidden-import autosync --hidden-import exitwatch --hidden-import biosdb --hidden-import biosdb_data --hidden-import biosvault --hidden-import biostargets --hidden-import ui_biosvault
-          --hidden-import ui_ps2cards --hidden-import ui_cloud --hidden-import savehistory --hidden-import ui_history --hidden-import syncplan --hidden-import steamshortcut --hidden-import romlibrary --hidden-import libqueue --hidden-import ui_library --hidden-import libmeta --hidden-import ui_covers --hidden-import PIL.Image --hidden-import PIL.PngImagePlugin --hidden-import PIL.JpegImagePlugin
+          --hidden-import ui_ps2cards --hidden-import ui_cloud --hidden-import savehistory --hidden-import ui_history --hidden-import syncplan --hidden-import steamshortcut --hidden-import romlibrary --hidden-import libqueue --hidden-import ui_library --hidden-import libmeta --hidden-import ui_covers --hidden-import updater --hidden-import ui_update --hidden-import PIL.Image --hidden-import PIL.PngImagePlugin --hidden-import PIL.JpegImagePlugin
           emu_save_manager.py
       - name: Check the icon and artwork are bundled
         run: |
@@ -51,24 +53,38 @@ jobs:
           Write-Host "Artwork bundled:" (Get-ChildItem dist\EmuSaveManager\_internal\art -Name)
           if (-not (Test-Path "dist\EmuSaveManager\_internal\PIL")) { throw "Pillow is missing (cover pictures need it)" }
           Write-Host "Pillow bundled"
+          $v = Get-Content "dist\EmuSaveManager\_internal\app_version.txt" -Raw
+          if ($v.Trim() -ne $env:APP_VER) { throw "app_version.txt says '$v', expected $env:APP_VER" }
+          Write-Host "Version stamped: $v"
       - name: Build installer
         run: |
           choco install innosetup -y --no-progress
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVer=$env:APP_VER" packaging\installer.iss
       - name: Portable zip
         run: Compress-Archive -Path dist\EmuSaveManager -DestinationPath dist\EmuSaveManager-windows-portable.zip
+      # The app's Update button checks the download against these before running it.
+      - name: Checksums
+        run: |
+          foreach ($f in "EmuSaveManager-Setup.exe","EmuSaveManager-windows-portable.zip") {
+            $h = (Get-FileHash "dist\$f" -Algorithm SHA256).Hash.ToLower()
+            Set-Content -Path "dist\$f.sha256" -Value "$h  $f" -Encoding ascii
+            Write-Host "$h  $f"
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: windows
           path: |
             dist/EmuSaveManager-Setup.exe
             dist/EmuSaveManager-windows-portable.zip
+            dist/*.sha256
       - uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
           files: |
             dist/EmuSaveManager-Setup.exe
             dist/EmuSaveManager-windows-portable.zip
+            dist/EmuSaveManager-Setup.exe.sha256
+            dist/EmuSaveManager-windows-portable.zip.sha256
 
   linux:
     # Built on an older Ubuntu so the binary also runs on SteamOS (newer glibc).
@@ -77,12 +93,21 @@ jobs:
       - uses: actions/checkout@v4
       - name: System Python with Tk
         run: sudo apt-get update && sudo apt-get install -y python3-tk python3-venv
+      - name: Version from the tag
+        run: |
+          ver="${{ github.ref_name }}"; ver="${ver#v}"
+          [[ "$ver" =~ ^[0-9]+(\.[0-9]+)*$ ]] || ver=0.0.0
+          echo "APP_VER=$ver" >> "$GITHUB_ENV"
       - run: bash build_linux.sh
       - uses: actions/upload-artifact@v4
         with:
           name: linux-steamdeck
-          path: dist/EmuSaveManager-linux-x86_64.tar.gz
+          path: |
+            dist/EmuSaveManager-linux-x86_64.tar.gz
+            dist/EmuSaveManager-linux-x86_64.tar.gz.sha256
       - uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: dist/EmuSaveManager-linux-x86_64.tar.gz
+          files: |
+            dist/EmuSaveManager-linux-x86_64.tar.gz
+            dist/EmuSaveManager-linux-x86_64.tar.gz.sha256

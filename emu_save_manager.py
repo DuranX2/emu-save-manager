@@ -81,6 +81,17 @@ def builtin_profiles():
         return d
 
     emudeck_emus = appdata / "EmuDeck" / "Emulators"
+    # PrimeHack is a Dolphin fork with a User folder of its own (portable next to the program on
+    # Windows, the Flatpak's data folder on the Steam Deck).
+    primehack_bases = [emudeck_emus / "primehack" / "User",
+                       flat / "io.github.shiiion.primehack" / "data" / "dolphin-emu",
+                       data / "primehack", appdata / "PrimeHack"]
+    # Cemu keeps Wii U saves in mlc01/usr/save. EmuDeck puts mlc01 in Emulation/roms/wiiu on the
+    # Steam Deck and in its Emulators/cemu folder on Windows.
+    cemu_mlcs = ([emudeck_emus / "cemu" / "mlc01", appdata / "Cemu" / "mlc01"]
+                 + [r / "roms" / "wiiu" / "mlc01" for r in _emudeck_roots_safe()]
+                 + [data / "Cemu" / "mlc01", mac / "Cemu" / "mlc01",
+                    flat / "info.cemu.Cemu" / "data" / "Cemu" / "mlc01"])
     # Xbox 360 content types inside Xenia's content/<profile or 0...0>/<title id>/ folders that are
     # downloads, not saves: DLC, title updates, installed/on-demand/arcade/demo games.
     XENIA_NOT_SAVES = ("00000002", "000B0000", "00004000", "00007000", "000D0000", "00080000")
@@ -141,6 +152,28 @@ def builtin_profiles():
                 loc("Wii Saves", [b / "Wii" for b in dolphin_bases]),
                 loc("Save States", [b / "StateSaves" for b in dolphin_bases]
                     + [emudeck_dolphin / "StateSaves"]),
+            ],
+        },
+        "PrimeHack": {
+            "prefer_emudeck": True,
+            "notes": "Metroid Prime Trilogy (a Dolphin fork). It keeps its own GameCube and Wii saves "
+                     "and save states, separate from Dolphin's. Close PrimeHack before restoring. "
+                     "Portable install somewhere else? Use 'Locations…'.",
+            "locations": [
+                loc("GameCube Saves", [b / "GC" for b in primehack_bases]),
+                loc("Wii Saves", [b / "Wii" for b in primehack_bases]),
+                # EmuDeck links this as saves/primehack/states on Windows but .../StateSaves on Linux
+                loc("Save States", [b / "StateSaves" for b in primehack_bases]
+                    + [r / "saves" / "primehack" / "StateSaves" for r in _emudeck_roots_safe()]),
+            ],
+        },
+        "Cemu": {
+            "prefer_emudeck": True,
+            "notes": "Wii U. Game saves (mlc01/usr/save, one folder per game and user). Cemu has no "
+                     "save states. A portable Cemu keeps mlc01 next to the program: use 'Locations…'. "
+                     "Close Cemu before restoring.",
+            "locations": [
+                loc("Saves", [m / "usr" / "save" for m in cemu_mlcs]),
             ],
         },
         "Yuzu": {
@@ -255,6 +288,14 @@ def builtin_profiles():
             ],
         },
     })
+
+
+def _emudeck_roots_safe():
+    try:
+        import cloudsync
+        return list(cloudsync.emudeck_roots())
+    except Exception:  # noqa - never let detection break the app
+        return []
 
 
 def _with_emudeck_folders(profiles):
@@ -568,6 +609,34 @@ class App(tk.Tk):
         self._build_ui()
         self.refresh_emulator_list()
         self.after(100, self._poll)
+        self._start_updates()
+        self.after(2500, self._ensure_watcher)
+
+    # ---- updates -----------------------------------------------------------
+    def _start_updates(self):
+        try:
+            import ui_update
+            self.updates = ui_update.UpdateController(self, lambda: save_config(self.cfg))
+        except Exception as ex:  # noqa - an update check must never stop the app
+            self.updates = None
+            print("Update check unavailable:", ex)
+        ver = getattr(self.updates, "current", None)
+        self.version_label.config(text=f"Version {ver}" if ver else "Development version")
+
+    def open_updates(self):
+        if self.updates is not None:
+            self.updates.open_dialog()
+
+    def quit_for_update(self):
+        """Close every window so the installer can replace the program."""
+        self.destroy()
+
+    def _ensure_watcher(self):
+        try:
+            import exitwatch
+            exitwatch.ensure_running(self.cfg)
+        except Exception:  # noqa
+            pass
 
     # ---- profile / path handling -----------------------------------------
     def build_profiles(self):
@@ -598,6 +667,7 @@ class App(tk.Tk):
     def _build_ui(self):
         top = ttk.Frame(self, padding=(10, 8))
         top.pack(fill="x")
+        self.updates = None
         ttk.Label(top, text="Backup folder:").pack(side="left")
         self.backup_dir_label = ttk.Label(top, text=str(self.backup_dir))
         self.backup_dir_label.pack(side="left", padx=6)
@@ -610,6 +680,7 @@ class App(tk.Tk):
 
         panes = ttk.PanedWindow(self, orient="horizontal")
         panes.pack(fill="both", expand=True, padx=10, pady=(0, 6))
+        self.update_bar_before = panes            # the update bar goes above the panes
 
         # Left: emulator list
         left = ttk.Frame(panes, padding=(0, 0, 8, 0))
@@ -691,11 +762,15 @@ class App(tk.Tk):
 
         # Status bar
         bottom = ttk.Frame(self, padding=(10, 0, 10, 8))
-        bottom.pack(fill="x")
+        # packed before the panes so a short window (or the update bar) never pushes it off-screen
+        bottom.pack(fill="x", side="bottom", before=panes)
         self.status = ttk.Label(bottom, text="Ready")
         self.status.pack(side="left")
         self.progress = ttk.Progressbar(bottom, length=260, maximum=100)
         self.progress.pack(side="right")
+        ttk.Button(bottom, text="Updates…", command=self.open_updates).pack(side="right", padx=(0, 10))
+        self.version_label = ttk.Label(bottom, foreground="#666")
+        self.version_label.pack(side="right", padx=(0, 6))
 
     # ---- emulator list ---------------------------------------------------
     def refresh_emulator_list(self, select=None):

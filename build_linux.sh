@@ -10,9 +10,14 @@ python3 -m venv .buildenv
 . .buildenv/bin/activate
 pip install --upgrade pip pyinstaller "pillow>=10"
 
+# the version the update check compares against (the workflow sets APP_VER from the release tag)
+mkdir -p build
+printf '%s' "${APP_VER:-0.0.0}" > build/app_version.txt
+
 pyinstaller --noconfirm --clean --windowed --name EmuSaveManager --add-data "packaging/art:art" \
+  --add-data "build/app_version.txt:." \
   --hidden-import ps2mc --hidden-import ps2folder --hidden-import cloudsync --hidden-import autosync --hidden-import exitwatch --hidden-import biosdb --hidden-import biosdb_data --hidden-import biosvault --hidden-import biostargets --hidden-import ui_biosvault \
-  --hidden-import ui_ps2cards --hidden-import ui_cloud --hidden-import savehistory --hidden-import ui_history --hidden-import syncplan --hidden-import steamshortcut --hidden-import romlibrary --hidden-import libqueue --hidden-import ui_library --hidden-import libmeta --hidden-import ui_covers --hidden-import PIL.Image --hidden-import PIL.PngImagePlugin --hidden-import PIL.JpegImagePlugin \
+  --hidden-import ui_ps2cards --hidden-import ui_cloud --hidden-import savehistory --hidden-import ui_history --hidden-import syncplan --hidden-import steamshortcut --hidden-import romlibrary --hidden-import libqueue --hidden-import ui_library --hidden-import libmeta --hidden-import ui_covers --hidden-import updater --hidden-import ui_update --hidden-import PIL.Image --hidden-import PIL.PngImagePlugin --hidden-import PIL.JpegImagePlugin \
   emu_save_manager.py
 
 PKG=dist/EmuSaveManager-linux
@@ -26,6 +31,11 @@ done
 echo "Artwork bundled: $(ls "$PKG/app/_internal/art" | tr '\n' ' ')"
 [ -d "$PKG/app/_internal/PIL" ] || { echo "Pillow is missing from the package (cover pictures need it)"; exit 1; }
 echo "Pillow bundled"
+[ "$(cat "$PKG/app/_internal/app_version.txt")" = "${APP_VER:-0.0.0}" ] || { echo "Version not stamped"; exit 1; }
+echo "Version stamped: ${APP_VER:-0.0.0}"
 chmod +x "$PKG/install.sh" "$PKG/app/EmuSaveManager"
 tar -C dist -czf dist/EmuSaveManager-linux-x86_64.tar.gz EmuSaveManager-linux
+# the app's Update button checks the download against this before installing it
+(cd dist && sha256sum EmuSaveManager-linux-x86_64.tar.gz > EmuSaveManager-linux-x86_64.tar.gz.sha256)
+cat dist/EmuSaveManager-linux-x86_64.tar.gz.sha256
 echo "Built: dist/EmuSaveManager-linux-x86_64.tar.gz"

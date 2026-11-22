@@ -17,9 +17,11 @@ if defined QUICK (
 py -3 -m pip install "pillow>=10" || goto :err
 if not defined APP_VER set APP_VER=0.0.0
 py -3 packaging\make_version_info.py %APP_VER% build\version_info.txt || goto :err
-py -3 -m PyInstaller --noconfirm --clean --windowed --noupx --name EmuSaveManager --version-file build\version_info.txt --icon packaging\art\emu-save-manager.ico --add-data "packaging\art;art" ^
+rem the version the update check compares against
+>build\app_version.txt <nul set /p "=%APP_VER%"
+py -3 -m PyInstaller --noconfirm --clean --windowed --noupx --name EmuSaveManager --version-file build\version_info.txt --icon packaging\art\emu-save-manager.ico --add-data "packaging\art;art" --add-data "build\app_version.txt;." ^
   --hidden-import ps2mc --hidden-import ps2folder --hidden-import cloudsync --hidden-import autosync --hidden-import exitwatch --hidden-import biosdb --hidden-import biosdb_data --hidden-import biosvault --hidden-import biostargets --hidden-import ui_biosvault ^
-  --hidden-import ui_ps2cards --hidden-import ui_cloud --hidden-import savehistory --hidden-import ui_history --hidden-import syncplan --hidden-import steamshortcut --hidden-import romlibrary --hidden-import libqueue --hidden-import ui_library --hidden-import libmeta --hidden-import ui_covers --hidden-import PIL.Image --hidden-import PIL.PngImagePlugin --hidden-import PIL.JpegImagePlugin ^
+  --hidden-import ui_ps2cards --hidden-import ui_cloud --hidden-import savehistory --hidden-import ui_history --hidden-import syncplan --hidden-import steamshortcut --hidden-import romlibrary --hidden-import libqueue --hidden-import ui_library --hidden-import libmeta --hidden-import ui_covers --hidden-import updater --hidden-import ui_update --hidden-import PIL.Image --hidden-import PIL.PngImagePlugin --hidden-import PIL.JpegImagePlugin ^
   emu_save_manager.py || goto :err
 
 set ISCC=

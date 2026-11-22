@@ -52,7 +52,8 @@ INTERVALS = (5, 10, 15, 30, 60, 120)
 # Linux names are what /proc/<pid>/comm shows (max 15 characters).  Note: plain
 # "dolphin" on Linux is KDE's file manager, so only "dolphin-emu*" counts there.
 EMULATOR_PREFIXES = ("pcsx2", "duckstation", "retroarch", "xemu", "dolphin-emu",
-                     "yuzu", "azahar", "melonds", "ppsspp", "rpcs3", "xenia")
+                     "yuzu", "azahar", "melonds", "ppsspp", "rpcs3", "xenia",
+                     "cemu", "primehack")
 WINDOWS_EXTRA = ("dolphin.exe",)
 
 

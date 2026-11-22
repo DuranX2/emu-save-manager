@@ -8,7 +8,7 @@ Keep all `.py` files in this folder together and run:
 
 | File | Purpose |
 |---|---|
-| `emu_save_manager.py` | Main window: backup / restore for PCSX2, Xemu, DuckStation, Dolphin, RetroArch, Yuzu, Azahar, melonDS, PPSSPP, RPCS3, Xenia, custom |
+| `emu_save_manager.py` | Main window: backup / restore for PCSX2, Xemu, DuckStation, Dolphin, RetroArch, Yuzu, Azahar, melonDS, PPSSPP, RPCS3, Xenia, PrimeHack, Cemu, custom |
 | `ps2mc.py` | PS2 memory card engine (FAT, ECC, .psu) - no GUI, reusable |
 | `ps2folder.py` | PCSX2 *folder* memory card engine (same interface as `ps2mc`) - no GUI |
 | `ui_ps2cards.py` | PS2 Card Manager window |
@@ -46,8 +46,9 @@ Supported emulators and the EmuDeck cloud folders they sync to: PCSX2 (`pcsx2/sa
 DuckStation (`duckstation/…`), Dolphin (`dolphin/GC`, `dolphin/Wii`, `dolphin/states`), RetroArch
 (`retroarch/…`), Xemu (`xemu`, off by default), Yuzu (`yuzu/saves`, `yuzu/profiles`), Azahar
 (`azahar/saves` = its SD card folder, `azahar/states`), melonDS (`melonds/…`), PPSSPP (`ppsspp/saves`,
-`ppsspp/states`), RPCS3 (`rpcs3/saves`, `rpcs3/trophy`) and Xenia (`xenia/saves`, its content folder
-without DLC, title updates and installed games). With EmuDeck these are the `Emulation/saves/<emulator>/`
+`ppsspp/states`), RPCS3 (`rpcs3/saves`, `rpcs3/trophy`), Xenia (`xenia/saves`, its content folder
+without DLC, title updates and installed games), PrimeHack (`primehack/GC`, `primehack/Wii`,
+`primehack/states`) and Cemu (`Cemu/saves`, its `mlc01/usr/save` folder). With EmuDeck these are the `Emulation/saves/<emulator>/`
 folders on both Windows and the Steam Deck, so both devices meet in the same cloud folders.
 
 How changes are decided: after every sync the app remembers what each item looked like on both sides
@@ -187,6 +188,21 @@ the application menu (**ROM Library**), or run `EmuSaveManager --rom-library`.
 
   Everything found is stored once in the library's `.library` folder (covers shrunk to a sensible
   size), so every machine shows the same artwork. Only artwork and text are downloaded, never games.
+
+## Updates
+Once a day the app asks GitHub for the latest release (only the version number and release notes
+are fetched). When there's a newer one, a bar at the top of the main window offers **What's new**,
+**Update** and **Skip this version**. Nothing is downloaded or installed until you click Update:
+- **Windows (installed with Setup.exe):** the new Setup.exe is downloaded, checked against its
+  SHA-256, and runs silently over the current install; the app then starts again by itself. Running
+  copies (the ROM Library, the sync-on-exit watcher) are closed first, and the watcher starts again.
+- **Steam Deck / Linux:** the new package is downloaded and checked, and its `install.sh` runs once
+  the app has closed (your Steam library entry is kept); then the app starts again.
+  The log is in `~/.emu_save_manager/updates/update.log`.
+- **Windows portable zip:** Update opens the release page instead, since there's nothing to install.
+
+**Updates…** at the bottom of the window shows your version, checks now, and turns the daily check
+off. Copies run from source (and test builds) don't check.
 
 ## Building installable packages (no Python needed on the target)
 PyInstaller can't cross-compile, so each OS is built on that OS:

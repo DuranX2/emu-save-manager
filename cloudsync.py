@@ -69,6 +69,10 @@ EMUDECK_SUBPATHS = {
     ("RPCS3", "Saves"): "rpcs3/saves",
     ("RPCS3", "Trophies"): "rpcs3/trophy",
     ("Xenia", "Saves"): "xenia/saves",
+    ("PrimeHack", "GameCube Saves"): "primehack/GC",
+    ("PrimeHack", "Wii Saves"): "primehack/Wii",
+    ("PrimeHack", "Save States"): "primehack/states",
+    ("Cemu", "Saves"): "Cemu/saves",
 }
 # Cloud folders earlier versions used by mistake; a saved setting equal to one of these
 # means "the default" (1.0.0 used dolphin/StateSaves, but EmuDeck keeps dolphin/states).
