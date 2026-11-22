@@ -24,6 +24,10 @@ Keep all `.py` files in this folder together and run:
 | `syncplan.py` | decides what each sync copies: remembers the last synced state, conflicts, folder-card saves as one item - no GUI |
 | `savehistory.py` | Save History: earlier versions of synced saves, kept at every sync; restore - no GUI |
 | `ui_history.py` | Save History window |
+| `saveinfo.py` | works out which game and which save each file belongs to (GameCube/Wii/PSP/PS3/PS1 metadata and icons, state file names, title-ID folders) - no GUI |
+| `titledb.py` | game names for IDs from the emulators' own lists, Cemu's title cache and ROM headers - no GUI |
+| `ui_saves.py` | the main window's save list, grouped by game |
+| `updater.py` / `ui_update.py` | update check and installer hand-off / the update bar and windows |
 
 ## PC <-> Steam Deck: two-way sync through OneDrive (or EmuDeck Cloud)
 Install the app on both (Windows: `EmuSaveManager-Setup.exe`; Steam Deck: see *Building* below), then on
@@ -84,6 +88,20 @@ question, or later: `~/.local/share/EmuSaveManager/EmuSaveManager --add-to-steam
 (`--remove-from-steam` takes it out; `./install.sh --remove` does too). Steam's `shortcuts.vdf` is backed up
 next to itself before every change. The artwork is in `packaging/art/` (`tools/make_art.py` draws it).
 In Game Mode, use the touchscreen or the trackpad as the mouse, and Steam + X for the keyboard.
+
+## Readable save lists
+The main window groups each emulator's files by save and shows the **game's name, the save's own
+description and its icon**, with each file's role underneath (save data, save information, icon,
+screenshot, save state slot…). Select a save to see its banner and details below the list; backing
+up a selected save takes all its files. Untick **Group by game** for the plain file list.
+- **Read from the saves themselves:** GameCube (`.gci` and whole-card `.raw` images: game ID, both
+  comment lines, banner, icon), Wii (`banner.bin`: title, subtitle, icon), PSP and PS3
+  (`PARAM.SFO` and `ICON0.PNG`), PS3 trophies, and PS1 cards (each save's product code, title and icon).
+- **Named from IDs:** save states (Dolphin, PPSSPP, DuckStation, PCSX2, Azahar) and title-ID folders
+  (Switch, 3DS, Wii U, Xbox 360). Names come from what's already on your machine, never downloaded:
+  the lists Dolphin, PCSX2 and DuckStation ship with, Cemu's `title_list_cache.xml`, the headers of
+  your ROMs in EmuDeck's `Emulation/roms` (GameCube/Wii discs, 3DS, Switch, Wii U, PS3), and names
+  seen in your saves. They're cached in `~/.emu_save_manager/titles.json`.
 
 ## Save History
 Every sync keeps earlier versions of the synced saves on that device: once before the sync (what you changed

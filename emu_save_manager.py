@@ -606,9 +606,11 @@ class App(tk.Tk):
         self.busy = False
         self.q = queue.Queue()
 
+        self.titles = None
         self._build_ui()
         self.refresh_emulator_list()
         self.after(100, self._poll)
+        self._start_titles()
         self._start_updates()
         self.after(2500, self._ensure_watcher)
 
@@ -714,17 +716,10 @@ class App(tk.Tk):
         # Current saves
         saves = ttk.LabelFrame(vpanes, text="Current save data", padding=6)
         vpanes.add(saves, weight=1)
-        cols = ("location", "file", "size", "modified")
-        self.save_tree = ttk.Treeview(saves, columns=cols, show="headings", height=8,
-                                      selectmode="extended")
-        for c, text, w, anchor in (("location", "Location", 110, "w"), ("file", "File", 380, "w"),
-                                   ("size", "Size", 90, "e"), ("modified", "Modified", 150, "w")):
-            self.save_tree.heading(c, text=text)
-            self.save_tree.column(c, width=w, anchor=anchor)
-        sb = ttk.Scrollbar(saves, orient="vertical", command=self.save_tree.yview)
-        self.save_tree.configure(yscrollcommand=sb.set)
-        self.save_tree.grid(row=0, column=0, sticky="nsew")
-        sb.grid(row=0, column=1, sticky="ns")
+        import ui_saves
+        self.save_list = ui_saves.SaveList(saves, grouped=self.cfg.get("group_saves", True))
+        self.save_list.grid(row=0, column=0, columnspan=2, sticky="nsew")
+        self.save_tree = self.save_list.tree
         saves.rowconfigure(0, weight=1)
         saves.columnconfigure(0, weight=1)
         self.saves_summary = ttk.Label(saves, text="")
@@ -736,6 +731,8 @@ class App(tk.Tk):
         ttk.Button(btns, text="Locations…", command=self.edit_locations).pack(side="left")
         ttk.Button(btns, text="Open folder", command=self.open_save_folder).pack(side="left", padx=4)
         ttk.Button(btns, text="Refresh", command=self.refresh_all).pack(side="left")
+        ttk.Checkbutton(btns, text="Group by game", variable=self.save_list.grouped,
+                        command=self._toggle_grouping).pack(side="left", padx=(12, 0))
 
         # Backups
         backups = ttk.LabelFrame(vpanes, text="Backups", padding=6)
@@ -813,23 +810,72 @@ class App(tk.Tk):
 
     def refresh_saves(self, resolved=None):
         emu = self.current
+        if emu is None:
+            return
         resolved = resolved or self.resolve(emu)
-        self.save_tree.delete(*self.save_tree.get_children())
-        self.entries = {}
-        total = 0
-        i = 0
+        located = []
         for loc in self.profiles[emu]["locations"]:
-            for e in scan_location(loc["label"], resolved[loc["label"]],
-                                   loc.get("patterns", ["*"]), loc.get("recursive", True),
-                                   loc.get("exclude_dirs", ())):
-                iid = str(i)
-                i += 1
-                self.entries[iid] = e
-                total += e.size
-                self.save_tree.insert("", "end", iid=iid, values=(
-                    e.location, e.rel.as_posix(), human_size(e.size),
-                    datetime.fromtimestamp(e.mtime).strftime("%Y-%m-%d %H:%M")))
-        self.saves_summary.config(text=f"{len(self.entries)} file(s), {human_size(total)}")
+            base = resolved[loc["label"]]
+            located.append((loc["label"], base,
+                            scan_location(loc["label"], base, loc.get("patterns", ["*"]),
+                                          loc.get("recursive", True), loc.get("exclude_dirs", ()))))
+        self.save_list.populate(emu, located, self.titles)
+        self.entries = self.save_list.entries
+        self.saves_summary.config(text=self.save_list.summary())
+
+    def _toggle_grouping(self):
+        self.cfg["group_saves"] = bool(self.save_list.grouped.get())
+        save_config(self.cfg)
+        self.refresh_saves()
+
+    # ---- game names (titledb) ----------------------------------------------
+    def _start_titles(self):
+        """Load game names in the background (emulators' lists, Cemu's cache, ROM headers), then
+        refresh the list so save states and title-ID folders get names."""
+        import threading
+        import titledb
+        self.titles = titledb.TitleDB()
+        installs, cemu, ps3 = set(), set(), set()
+        for emu in self.profiles:
+            try:
+                res = self.resolve(emu)
+            except Exception:  # noqa
+                continue
+            for p in res.values():
+                if not p:
+                    continue
+                for parent in list(Path(p).parents)[:4]:      # portable installs keep saves inside
+                    installs.add(parent)
+                if emu == "Cemu":
+                    for parent in list(Path(p).parents)[:4]:
+                        if parent.name.lower() == "mlc01":
+                            cemu.add(parent.parent)
+                if emu == "RPCS3":
+                    for parent in Path(p).parents:
+                        if parent.name.lower() == "dev_hdd0":
+                            ps3.add(parent / "game")
+                            break
+        self._titles_done = False
+
+        def work():
+            try:
+                self.titles.load(install_extra=sorted(installs, key=str), cemu_extra=sorted(cemu, key=str),
+                                 ps3_game_dirs=sorted(ps3, key=str))
+            except Exception as ex:  # noqa - names are a nicety
+                print("Loading game names failed:", ex)
+            self._titles_done = True
+        threading.Thread(target=work, daemon=True).start()
+        self.after(400, self._titles_check)
+
+    def _titles_check(self):
+        if not self._titles_done:
+            self.after(400, self._titles_check)
+            return
+        try:
+            self.titles.save()
+            self.refresh_saves()
+        except tk.TclError:
+            pass
 
     def list_backups(self, emu):
         folder = self.backup_dir / safe_name(emu)
@@ -901,14 +947,14 @@ class App(tk.Tk):
 
     # ---- backup actions --------------------------------------------------
     def backup_selected(self):
-        sel = self.save_tree.selection()
+        sel = self.save_list.selected_entries()
         if not sel:
-            messagebox.showinfo(APP_NAME, "Select one or more files first, or use 'Back up all'.")
+            messagebox.showinfo(APP_NAME, "Select one or more saves or files first, or use 'Back up all'.")
             return
-        self._do_backup([self.entries[i] for i in sel])
+        self._do_backup(sel)
 
     def backup_all(self):
-        self._do_backup(list(self.entries.values()))
+        self._do_backup(self.save_list.all_entries())
 
     def _do_backup(self, entries):
         if not entries:
