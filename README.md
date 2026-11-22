@@ -12,6 +12,9 @@ Keep all `.py` files in this folder together and run:
 | `ps2mc.py` | PS2 memory card engine (FAT, ECC, .psu) - no GUI, reusable |
 | `ps2folder.py` | PCSX2 *folder* memory card engine (same interface as `ps2mc`) - no GUI |
 | `ui_ps2cards.py` | PS2 Card Manager window |
+| `ui_ps2console.py` | the PS2 Card Manager's console view (controller-friendly, 3D save icons) |
+| `ps2icon.py` | PS2 save icons: `icon.sys`, the 3D icon format, and a Pillow renderer - no GUI |
+| `gamepad.py` | controller (XInput / Linux joystick) and keyboard navigation for Tk windows |
 | `cloudsync.py` | rclone wrapper using EmuDeck's folder layout, incl. EmuDeck Cloud - no GUI |
 | `ui_cloud.py` | Cloud Sync window |
 | `biosdb.py`, `biosdb_data.py` | identify BIOS files by content (PS2 version record, libretro fingerprints) - no GUI |
@@ -169,6 +172,22 @@ Folder cards are written the way PCSX2 writes them (`_pcsx2_index` timestamps an
 `_pcsx2_meta*` for names Windows can't store or non-standard attributes). PCSX2 only loads the
 running game's saves from a folder card, so the 8 MB limit applies per game, not to the whole card.
 A folder card PCSX2 created but never formatted is formatted automatically when saves are added.
+
+### Console view
+**Console view (F2)** turns the manager into a full-window, controller-friendly screen: each save's
+own 3D icon (from its icon files, lit and coloured by its `icon.sys`) in a grid, and the selected
+save spinning on its own background colours with its two-line title, size and date. The two cards
+are slots 1 and 2. It's an original design in the spirit of a console's memory card screen (no
+console artwork, fonts or sounds).
+- **Controller** (Xbox-style; on the Steam Deck through Steam): D-pad / stick to move, **A** options
+  (copy or move to the other slot, delete, export, details), **X** mark several saves, **Y** menu
+  (choose the card in each slot, refresh, list view, close), **B** back, **LB / RB** switch slot,
+  **Start (☰)** back to the list view.
+- **Keyboard**: arrows, Enter, X, Tab, Esc, Q / E, F2. The mouse works too.
+- Copies, moves and deletes use the same verification and safety copies as the list view; the
+  questions are asked inside the window. Exports go to `<backup folder>/PS2 exports/`.
+  Creating, renaming and deleting card files, and importing `.psu` files, are in the list view.
+- The view you used last is remembered.
 
 ## ROM Library (preview)
 

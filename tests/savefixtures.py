@@ -220,3 +220,83 @@ def nsp(path, title_id):
     b = b"PFS0" + struct.pack("<III", len(names), len(strtab), 0) + entries + strtab + b"\0" * 32
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     Path(path).write_bytes(b)
+
+
+# ---------------------------------------------------------------------------
+# PS2 save icons
+# ---------------------------------------------------------------------------
+def ps2_icon_sys(title1="SPACE GAME", title2="Stage 3", icon="icon.ico", copy="", delete="",
+                 bg=((60, 0, 0), (0, 60, 0), (0, 0, 60), (60, 60, 0))):
+    b = bytearray(964)
+    b[0:4] = b"PS2D"
+    t1, t2 = title1.encode("cp932"), title2.encode("cp932")
+    struct.pack_into("<H", b, 6, len(t1) if title2 else 0)
+    struct.pack_into("<I", b, 0x0C, 0x80)
+    for k, (r, g, bb) in enumerate(bg):
+        struct.pack_into("<4I", b, 0x10 + 16 * k, r, g, bb, 0)
+    for k, v in enumerate([(0, 0, 1, 0), (0.5, 0.5, 0.5, 0), (-0.5, 0.5, 0.5, 0)]):
+        struct.pack_into("<4f", b, 0x50 + 16 * k, *v)
+    for k, v in enumerate([(0.8, 0.8, 0.8, 0), (0.2, 0.2, 0.2, 0), (0.1, 0.1, 0.1, 0)]):
+        struct.pack_into("<4f", b, 0x80 + 16 * k, *v)
+    struct.pack_into("<4f", b, 0xB0, 0.3, 0.3, 0.3, 0)
+    title = (t1 + t2)[:67]
+    b[0xC0:0xC0 + len(title)] = title
+    for off, name in ((0x104, icon), (0x144, copy or icon), (0x184, delete or icon)):
+        b[off:off + len(name)] = name.encode("ascii")
+    return bytes(b)
+
+
+def _cube_tris(s=1.0):
+    """12 triangles of a cube, with per-face UV quads; front face (+z) uses the left half."""
+    faces = [  # (normal, four corners)
+        ((0, 0, 1), [(-s, -s, s), (s, -s, s), (s, s, s), (-s, s, s)]),
+        ((0, 0, -1), [(s, -s, -s), (-s, -s, -s), (-s, s, -s), (s, s, -s)]),
+        ((1, 0, 0), [(s, -s, s), (s, -s, -s), (s, s, -s), (s, s, s)]),
+        ((-1, 0, 0), [(-s, -s, -s), (-s, -s, s), (-s, s, s), (-s, s, -s)]),
+        ((0, -1, 0), [(-s, -s, -s), (s, -s, -s), (s, -s, s), (-s, -s, s)]),
+        ((0, 1, 0), [(-s, s, s), (s, s, s), (s, s, -s), (-s, s, -s)]),
+    ]
+    tris = []
+    for fi, (n, q) in enumerate(faces):
+        u0, u1 = (0.02, 0.48) if fi == 0 else (0.52, 0.98)
+        uv = [(u0, 0.02), (u1, 0.02), (u1, 0.98), (u0, 0.98)]
+        for a, b, c in ((0, 1, 2), (0, 2, 3)):
+            tris += [(q[a], n, uv[a]), (q[b], n, uv[b]), (q[c], n, uv[c])]
+    return tris
+
+
+def ps2_icon(shapes=1, compressed=False, textured=True, color=(128, 128, 128, 128)):
+    """A textured cube icon. Texture: left half red, right half blue (16-bit, red in low bits).
+    Shape 2 (if any) is the cube at half size, with animation keys morphing 0 -> 1 -> 0."""
+    tris = _cube_tris()
+    tex_type = 0x07 if textured else 0x03
+    if textured and compressed:
+        tex_type = 0x0F
+    out = bytearray(struct.pack("<IIIfI", 0x00010000, shapes, tex_type, 1.0, len(tris)))
+    for pos, n, uv in tris:
+        for sh in range(shapes):
+            k = 1.0 if sh == 0 else 0.5
+            out += struct.pack("<hhhH", *(int(c * k * 4096) for c in pos), 0)
+        out += struct.pack("<hhhH", *(int(c * 4096) for c in n), 0)
+        out += struct.pack("<hh", int(uv[0] * 4096), int(uv[1] * 4096))
+        out += bytes(color)
+    out += struct.pack("<IIfII", 1, 60, 1.0, 0, shapes if shapes > 1 else 1)
+    if shapes > 1:
+        out += struct.pack("<II", 0, 3) + struct.pack("<6f", 0, 1, 30, 0, 60, 1)
+        out += struct.pack("<II", 1, 3) + struct.pack("<6f", 0, 0, 30, 1, 60, 0)
+    else:
+        out += struct.pack("<II", 0, 1) + struct.pack("<ff", 0, 1)
+    if textured:
+        red, blue = 31, 31 << 10
+        row = [red] * 64 + [blue] * 64
+        if compressed:
+            # per row: repeat red 64 times, then 2 literal blues, then repeat blue 62 times
+            body = b""
+            for _ in range(128):
+                body += struct.pack("<HH", 64, red)
+                body += struct.pack("<H", 0x10000 - 2) + struct.pack("<HH", blue, blue)
+                body += struct.pack("<HH", 62, blue)
+            out += struct.pack("<I", len(body)) + body
+        else:
+            out += b"".join(struct.pack("<H", v) for _ in range(128) for v in row)
+    return bytes(out)

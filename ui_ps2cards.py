@@ -320,10 +320,18 @@ class PS2CardDialog(tk.Toplevel):
         self.warned = False
         self.dnd = DragDrop(self)
         self.active = None
+        # questions and folder pickers go through these, so the console view can answer them
+        self.msg = messagebox
+        self.ask_directory = filedialog.askdirectory
+        self.console = None
+        self.view = "classic"
         self._styles()
         self._build()
         self.refresh_card_lists(initial=True)
         self.set_active(self.left)
+        self.bind("<F2>", lambda e: self.set_view("console" if self.view == "classic" else "classic"))
+        if (getattr(app, "cfg", {}) or {}).get("ps2_view") == "console":
+            self.after(50, lambda: self.set_view("console"))
 
     # ---- UI ------------------------------------------------------------------------
     def _styles(self):
@@ -344,10 +352,14 @@ class PS2CardDialog(tk.Toplevel):
                           ("Rename…", self.rename_card), ("Delete card file…", self.delete_card)):
             ttk.Button(top, text=text, command=cmd).pack(side="left", padx=(0, 4))
         ttk.Button(top, text="Refresh", command=self.refresh_card_lists).pack(side="right")
+        ttk.Button(top, text="Console view (F2)", command=lambda: self.set_view("console")).pack(
+            side="right", padx=(4, 8))
+        self._top = top
         ttk.Button(top, text="Open folder", command=self.open_folder).pack(side="right", padx=4)
 
         body = ttk.Frame(self, padding=(10, 4, 10, 4))
         body.pack(fill="both", expand=True)
+        self._body = body
         self.left = CardPane(body, self, "Left card")
         self.right = CardPane(body, self, "Right card")
         mid = ttk.Frame(body, padding=(8, 0))
@@ -376,6 +388,7 @@ class PS2CardDialog(tk.Toplevel):
 
         bottom = ttk.Frame(self, padding=(10, 4, 10, 2))
         bottom.pack(fill="x")
+        self._bottom = bottom
         self.target_label = ttk.Label(bottom, text="Selected side:")
         self.target_label.pack(side="left", padx=(0, 6))
         for text, cmd in (("Export selected (.psu)…", self.export_selected),
@@ -390,6 +403,55 @@ class PS2CardDialog(tk.Toplevel):
 
     def status(self, text):
         self.status_bar.config(text=text)
+        if self.view == "console" and self.console is not None:
+            self.console.toast(text)
+
+    # ---- views -----------------------------------------------------------------------
+    def set_view(self, view):
+        """'classic' (the two lists) or 'console' (icons, controller-friendly)."""
+        if view == self.view:
+            return
+        if view == "console":
+            try:
+                import ui_ps2console
+            except Exception as ex:  # noqa - e.g. a build without Pillow
+                messagebox.showerror("Console view", f"The console view isn't available: {ex}", parent=self)
+                return
+            for f in (self._top, self._body, self._bottom, self.status_bar):
+                f.pack_forget()
+            if self.console is None:
+                self.console = ui_ps2console.ConsoleView(self, self)
+            self.console.pack(fill="both", expand=True)
+            self.msg = self.console.prompts
+            self.ask_directory = self._console_export_dir
+            self.view = "console"
+            self.console.start()
+        else:
+            if self.console is not None:
+                self.console.stop()
+                self.console.pack_forget()
+            self._top.pack(fill="x")
+            self._body.pack(fill="both", expand=True)
+            self._bottom.pack(fill="x")
+            self.status_bar.pack(fill="x")
+            self.msg = messagebox
+            self.ask_directory = filedialog.askdirectory
+            self.view = "classic"
+            self.reload_all()
+        cfg = getattr(self.app, "cfg", None)
+        if isinstance(cfg, dict) and cfg.get("ps2_view") != view:
+            cfg["ps2_view"] = view
+            try:
+                from emu_save_manager import save_config
+                save_config(cfg)
+            except Exception:  # noqa - remembering the view is a nicety
+                pass
+
+    def _console_export_dir(self, **_kw):
+        """The console view exports to a fixed folder (no file picker to drive with a controller)."""
+        d = Path(self.app.backup_dir) / "PS2 exports"
+        d.mkdir(parents=True, exist_ok=True)
+        return str(d)
 
     def set_active(self, pane):
         if self.active is pane:
@@ -486,7 +548,7 @@ class PS2CardDialog(tk.Toplevel):
     def _confirm_closed(self):
         if self.warned:
             return True
-        ok = messagebox.askokcancel(
+        ok = self.msg.askokcancel(
             "Close PCSX2 first",
             "Changing a memory card while PCSX2 is running can corrupt it.\n\n"
             "Close PCSX2 (or eject the card in Settings > Memory Cards), then press OK.\n"
@@ -509,14 +571,14 @@ class PS2CardDialog(tk.Toplevel):
             self._write(card, path)
             return True
         except ERRORS as ex:
-            messagebox.showerror("Memory card", f"The card was not changed:\n\n{ex}", parent=self)
+            self.msg.showerror("Memory card", f"The card was not changed:\n\n{ex}", parent=self)
             return False
         finally:
             self._busy(False)
 
     def _need_card(self, pane):
         if not pane.path:
-            messagebox.showinfo("Memory card", f"Pick a card on the {pane.label.lower()} first.",
+            self.msg.showinfo("Memory card", f"Pick a card on the {pane.label.lower()} first.",
                                 parent=self)
             return False
         return True
@@ -524,7 +586,7 @@ class PS2CardDialog(tk.Toplevel):
     def _need_selection(self, pane):
         sel = pane.selected()
         if not sel:
-            messagebox.showinfo("Memory card", f"Select one or more saves on the "
+            self.msg.showinfo("Memory card", f"Select one or more saves on the "
                                 f"{pane.label.lower()} first.", parent=self)
         return sel
 
@@ -538,7 +600,7 @@ class PS2CardDialog(tk.Toplevel):
             else:
                 msg = f"{len(clash)} saves are already on the target card:\n\n  " + \
                       "\n  ".join(clash[:12]) + ("\n  …" if len(clash) > 12 else "")
-            ans = messagebox.askyesnocancel(
+            ans = self.msg.askyesnocancel(
                 "Already on card", msg + "\n\nYes = replace them with the copies being sent\n"
                 "No = skip them\nCancel = stop", parent=self)
             if ans is None:
@@ -553,7 +615,7 @@ class PS2CardDialog(tk.Toplevel):
         if not self._need_card(src) or not self._need_card(dst):
             return
         if same_file(src.path, dst.path):
-            messagebox.showinfo("Memory card", "Both sides show the same card. "
+            self.msg.showinfo("Memory card", "Both sides show the same card. "
                                 "Pick a different card on one side.", parent=self)
             return
         names = self._need_selection(src)
@@ -563,7 +625,7 @@ class PS2CardDialog(tk.Toplevel):
         try:
             existing = set(open_card(dst.path).save_names())
         except ERRORS as ex:
-            messagebox.showerror(verb, f"Cannot read {dst.path.name}: {ex}", parent=self)
+            self.msg.showerror(verb, f"Cannot read {dst.path.name}: {ex}", parent=self)
             return
         picked = self._ask_overwrite(names, existing)
         if picked is None:
@@ -572,7 +634,7 @@ class PS2CardDialog(tk.Toplevel):
         if not chosen:
             self.status("Nothing to do: every selected save was skipped.")
             return
-        if move and not messagebox.askokcancel(
+        if move and not self.msg.askokcancel(
                 "Move saves", f"Move {len(chosen)} save(s) from {src.path.name} to {dst.path.name}?\n\n"
                 "They are copied and verified first, then removed from the source card.",
                 parent=self):
@@ -607,7 +669,7 @@ class PS2CardDialog(tk.Toplevel):
             else:
                 note = (f"The saves were copied to {dst.path.name}, but could not be removed "
                         f"from {src.path.name}. Nothing was lost.")
-            messagebox.showerror(verb, f"{ex}\n\n{note}", parent=self)
+            self.msg.showerror(verb, f"{ex}\n\n{note}", parent=self)
             self.reload_all()
             return
         finally:
@@ -629,7 +691,7 @@ class PS2CardDialog(tk.Toplevel):
         names = self._need_selection(pane)
         if not names:
             return
-        dest = filedialog.askdirectory(parent=self, title="Export .psu files to…")
+        dest = self.ask_directory(parent=self, title="Export .psu files to…")
         if not dest:
             return
         try:
@@ -644,7 +706,7 @@ class PS2CardDialog(tk.Toplevel):
                 target.write_bytes(build_psu(card.get_save(n)))
                 done.append(target.name)
         except ERRORS as ex:
-            messagebox.showerror("Export", str(ex), parent=self)
+            self.msg.showerror("Export", str(ex), parent=self)
             return
         self.status(f"Exported {len(done)} save(s) to {dest}")
 
@@ -661,12 +723,12 @@ class PS2CardDialog(tk.Toplevel):
             try:
                 saves.append(parse_psu(Path(f).read_bytes()))
             except ERRORS as ex:
-                messagebox.showerror("Import", f"{Path(f).name}: {ex}", parent=self)
+                self.msg.showerror("Import", f"{Path(f).name}: {ex}", parent=self)
                 return
         try:
             existing = set(open_card(pane.path).save_names())
         except ERRORS as ex:
-            messagebox.showerror("Import", str(ex), parent=self)
+            self.msg.showerror("Import", str(ex), parent=self)
             return
         picked = self._ask_overwrite([s.dirname for s in saves], existing)
         if picked is None:
@@ -693,7 +755,7 @@ class PS2CardDialog(tk.Toplevel):
         if not names:
             return
         shown = "\n  ".join(names[:15]) + ("\n  …" if len(names) > 15 else "")
-        if not messagebox.askyesno("Delete saves", f"Permanently delete from {pane.path.name}:\n\n  "
+        if not self.msg.askyesno("Delete saves", f"Permanently delete from {pane.path.name}:\n\n  "
                                    + shown + "\n\n" + self._kept_note(pane.path), parent=self):
             return
 
@@ -721,7 +783,7 @@ class PS2CardDialog(tk.Toplevel):
         pane = self.active
         d = self.card_dir() or (pane.path.parent if pane.path else None)
         if not d:
-            messagebox.showinfo("Memory card", "PCSX2's memory card folder was not found.\n"
+            self.msg.showinfo("Memory card", "PCSX2's memory card folder was not found.\n"
                                 "Set it with 'Locations…' in the main window.", parent=self)
             return None
         d.mkdir(parents=True, exist_ok=True)
@@ -733,11 +795,11 @@ class PS2CardDialog(tk.Toplevel):
         if not Path(name).suffix:
             name += ".ps2"
         if os.sep in name or "/" in name or name.startswith(".") or name.startswith("_pcsx2_"):
-            messagebox.showerror("Memory card", "Please enter a plain file name.", parent=self)
+            self.msg.showerror("Memory card", "Please enter a plain file name.", parent=self)
             return None
         target = d / name
         if target.exists():
-            messagebox.showerror("Memory card", f"{name} already exists.", parent=self)
+            self.msg.showerror("Memory card", f"{name} already exists.", parent=self)
             return None
         return target
 
@@ -749,7 +811,7 @@ class PS2CardDialog(tk.Toplevel):
         try:
             PS2Card.create_blank().save(target)
         except OSError as ex:
-            messagebox.showerror("New card", str(ex), parent=self)
+            self.msg.showerror("New card", str(ex), parent=self)
             return
         self.active.path = target
         self.refresh_card_lists()
@@ -764,7 +826,7 @@ class PS2CardDialog(tk.Toplevel):
         try:
             create_folder_card(target)
         except (CardError, OSError) as ex:
-            messagebox.showerror("New folder card", str(ex), parent=self)
+            self.msg.showerror("New folder card", str(ex), parent=self)
             return
         self.active.path = target
         self.refresh_card_lists()
@@ -785,7 +847,7 @@ class PS2CardDialog(tk.Toplevel):
             else:
                 shutil.copy2(pane.path, target)
         except OSError as ex:
-            messagebox.showerror("Duplicate", str(ex), parent=self)
+            self.msg.showerror("Duplicate", str(ex), parent=self)
             return
         other = self.right if pane is self.left else self.left
         other.path = target
@@ -803,7 +865,7 @@ class PS2CardDialog(tk.Toplevel):
         try:
             old.rename(target)
         except OSError as ex:
-            messagebox.showerror("Rename", str(ex), parent=self)
+            self.msg.showerror("Rename", str(ex), parent=self)
             return
         for p in (self.left, self.right):
             if p.path and p.path == old:
@@ -817,7 +879,7 @@ class PS2CardDialog(tk.Toplevel):
             return
         path = pane.path
         kind = "folder card" if path.is_dir() else "card file"
-        if not messagebox.askyesno(f"Delete {kind}", f"Delete {path.name} and ALL saves on it?\n"
+        if not self.msg.askyesno(f"Delete {kind}", f"Delete {path.name} and ALL saves on it?\n"
                                    f"The {kind} is moved to the backup folder, not erased.", parent=self):
             return
         try:
@@ -830,7 +892,7 @@ class PS2CardDialog(tk.Toplevel):
                 self._safety_copy(path)
                 path.unlink()
         except OSError as ex:
-            messagebox.showerror("Delete", str(ex), parent=self)
+            self.msg.showerror("Delete", str(ex), parent=self)
             return
         for p in (self.left, self.right):
             if p.path == path:
