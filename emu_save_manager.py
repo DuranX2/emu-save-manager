@@ -678,7 +678,13 @@ class App(tk.Tk):
         ttk.Button(top, text="Cloud Sync…", command=self.open_cloud).pack(side="right")
         ttk.Button(top, text="Save History…", command=self.open_history).pack(side="right", padx=(6, 0))
         ttk.Button(top, text="BIOS Vault…", command=self.open_bios_vault).pack(side="right", padx=(6, 0))
-        ttk.Button(top, text="PS2 Card Manager…", command=self.open_ps2_cards).pack(side="right", padx=6)
+        cards = ttk.Menubutton(top, text="Memory Cards", width=13)
+        cards_menu = tk.Menu(cards, tearoff=False)
+        cards_menu.add_command(label="PS2 Card Manager…", command=self.open_ps2_cards)
+        cards_menu.add_command(label="GameCube Card Manager…", command=self.open_gc_cards)
+        cards["menu"] = cards_menu
+        cards.pack(side="right", padx=6)
+        self.cards_menu = cards_menu
 
         panes = ttk.PanedWindow(self, orient="horizontal")
         panes.pack(fill="both", expand=True, padx=10, pady=(0, 6))
@@ -1065,6 +1071,10 @@ class App(tk.Tk):
     def open_ps2_cards(self):
         from ui_ps2cards import PS2CardDialog
         PS2CardDialog(self)
+
+    def open_gc_cards(self):
+        from ui_gccards import GCCardDialog
+        GCCardDialog(self, self.current if self.current in ("Dolphin", "PrimeHack") else "Dolphin")
 
     def open_bios_vault(self):
         from ui_biosvault import BiosVaultDialog

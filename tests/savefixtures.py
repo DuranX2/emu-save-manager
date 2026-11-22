@@ -39,7 +39,8 @@ def quad_image(w, h, a, b):
 
 
 def gci(code=b"GZLE", maker=b"01", fname=b"gczelda2", title="The Legend of Zelda",
-        detail="File 2", icon="rgb", banner=True, enc="cp1252", blocks=2):
+        detail="File 2", icon="rgb", banner=True, enc="cp1252", blocks=2, perms=0x04, bounce=False,
+        mtime=0x2B000000):
     """A .gci file (64-byte header + data)."""
     data = bytearray(blocks * 0x2000)
     off = 0
@@ -53,6 +54,11 @@ def gci(code=b"GZLE", maker=b"01", fname=b"gczelda2", title="The Legend of Zelda
         data[off:off + 2048] = encode_rgb5a3(quad_image(32, 32, GREEN, RED), 32, 32)
         off += 2048
         icon_fmt, anim = 2, 3
+    elif icon == "anim":                    # three frames: green, blue, red (speeds 1, 2, 3)
+        for col in (GREEN, BLUE, RED):
+            data[off:off + 2048] = encode_rgb5a3([[col] * 32 for _ in range(32)], 32, 32)
+            off += 2048
+        icon_fmt, anim = 2 | 2 << 2 | 2 << 4, 1 | 2 << 2 | 3 << 4
     elif icon == "ci8shared":
         idx = [[1 if x < 16 else 2 for x in range(32)] for _ in range(32)]
         data[off:off + 1024] = encode_ci8(idx, 32, 32)
@@ -69,9 +75,9 @@ def gci(code=b"GZLE", maker=b"01", fname=b"gczelda2", title="The Legend of Zelda
     data[com:com + 32] = title.encode(enc)[:32].ljust(32, b"\0")
     data[com + 32:com + 64] = detail.encode(enc)[:32].ljust(32, b"\0")
     hdr = bytearray(b"\xff" * 0x40)
-    hdr[0:4], hdr[4:6], hdr[6], hdr[7] = code, maker, 0xFF, flags
+    hdr[0:4], hdr[4:6], hdr[6], hdr[7] = code, maker, 0xFF, flags | (0x04 if bounce else 0)
     hdr[8:0x28] = fname.ljust(32, b"\0")
-    struct.pack_into(">IIHHBBHHHI", hdr, 0x28, 0, img_off, icon_fmt, anim, 4, 0, 5, blocks, 0xFFFF, com)
+    struct.pack_into(">IIHHBBHHHI", hdr, 0x28, mtime, img_off, icon_fmt, anim, perms, 0, 5, blocks, 0xFFFF, com)
     return bytes(hdr), bytes(data)
 
 

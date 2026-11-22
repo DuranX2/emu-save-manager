@@ -12,6 +12,9 @@ Keep all `.py` files in this folder together and run:
 | `ps2mc.py` | PS2 memory card engine (FAT, ECC, .psu) - no GUI, reusable |
 | `ps2folder.py` | PCSX2 *folder* memory card engine (same interface as `ps2mc`) - no GUI |
 | `ui_ps2cards.py` | PS2 Card Manager window |
+| `ui_console.py` | the shared parts of the console-style card managers (look, controls, in-window menus and questions) |
+| `gcfolder.py` | GameCube saves in Dolphin's GCI folders: list, verified copy / move, delete, export - no GUI |
+| `ui_gccards.py` | the GameCube Card Manager window |
 | `ui_ps2console.py` | the PS2 Card Manager's console view (controller-friendly, 3D save icons) |
 | `ps2icon.py` | PS2 save icons: `icon.sys`, the 3D icon format, and a Pillow renderer - no GUI |
 | `gamepad.py` | controller (XInput / Linux joystick) and keyboard navigation for Tk windows |
@@ -188,6 +191,21 @@ console artwork, fonts or sounds).
   questions are asked inside the window. Exports go to `<backup folder>/PS2 exports/`.
   Creating, renaming and deleting card files, and importing `.psu` files, are in the list view.
 - The view you used last is remembered.
+
+## GameCube Card Manager
+**Memory Cards → GameCube Card Manager…** opens a console-style, controller-friendly window for
+Dolphin's memory cards (Dolphin's default "GCI folder" cards: `GC/<region>/Card A` and `Card B`,
+one `.gci` file per save). Each save shows its own **animated icon** (every frame, with the game's
+timing) and its **banner**, with its two comment lines, size, date and game ID.
+- Two slots: any Card A / Card B of any region, or **Exported saves** (`<backup folder>/GameCube exports/`).
+- **A** options: copy or move to the other slot, delete, export a copy to the backups, details.
+  **X** marks several saves, **Y** menu (choose each slot, open the folder, refresh, close), **B** back,
+  **LB / RB** switch slot. Keyboard and mouse work too (same keys as the PS2 console view).
+- Copies are verified (written to a temporary file, read back, then put in place). Nothing is erased
+  outright: replaced, moved-away and deleted saves go to `<backup folder>/_gc_card_safety/` (newest 20
+  changes kept). Saves the game marked "no copy" / "no move" aren't copied / moved between cards
+  (exporting a backup is always allowed). Copying to another region's card asks first.
+- Close Dolphin first. Whole-card `.raw` images aren't supported here yet.
 
 ## ROM Library (preview)
 

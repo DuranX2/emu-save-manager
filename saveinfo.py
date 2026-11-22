@@ -172,6 +172,18 @@ class GCSave:
     blocks: int
     icon: Icon | None = None
     banner: Icon | None = None
+    frames: list = field(default_factory=list)   # [(Icon, ticks)] - a tick is 4/60 s
+    bounce: bool = False             # play the frames forwards then backwards (else loop)
+    modified: int = 0                # seconds since 2000-01-01 (card time)
+    permissions: int = 0             # 0x04 public, 0x08 no copy, 0x10 no move
+
+    @property
+    def no_copy(self):
+        return bool(self.permissions & 0x08)
+
+    @property
+    def no_move(self):
+        return bool(self.permissions & 0x10)
 
 
 def parse_gc_entry(hdr: bytes, data: bytes) -> GCSave | None:
@@ -192,16 +204,21 @@ def parse_gc_entry(hdr: bytes, data: bytes) -> GCSave | None:
     if com_off + 64 <= len(data):
         dec = _sjis if sjis else (lambda b: _cstr(b, "cp1252"))
         title, detail = dec(data[com_off:com_off + 32]), dec(data[com_off + 32:com_off + 64])
-    icon = banner = None
+    banner, frames = None, []
     if img_off != 0xFFFFFFFF and img_off < len(data):
         try:
-            banner, icon = _gc_images(data, img_off, hdr[7] & 3, icon_fmt, anim)
-        except (IndexError, ValueError):
+            banner, frames = _gc_images(data, img_off, hdr[7] & 3, icon_fmt, anim)
+        except (IndexError, ValueError, KeyError):
             pass
-    return GCSave(game_id, fname, title, detail, blocks, icon, banner)
+    mtime, = struct.unpack(">I", hdr[0x28:0x2C])
+    icon = frames[0][0] if frames else None
+    return GCSave(game_id, fname, title, detail, blocks, icon, banner, frames,
+                  bool(hdr[7] & 0x04), mtime, hdr[0x34])
 
 
 def _gc_images(data, off, banner_fmt, icon_fmt, anim):
+    """(banner, [(icon frame, ticks)]). Frames end at the first speed of 0; a frame with no
+    picture repeats the one before it; CI8 "shared" frames use one palette after all frames."""
     banner = None
     if banner_fmt == 1:                                    # CI8 + palette
         px = _decode_ci8(data[off:off + 3072], data[off + 3072:off + 3584], 96, 32)
@@ -211,27 +228,34 @@ def _gc_images(data, off, banner_fmt, icon_fmt, anim):
         px = _decode_rgb5a3(data[off:off + 6144], 96, 32)
         off += 6144
         banner = Icon("rgba", px, 96, 32) if px else None
-    frames = []
+    layout = []                                            # (format, offset, ticks)
     for i in range(8):
         fmt, speed = (icon_fmt >> 2 * i) & 3, (anim >> 2 * i) & 3
-        if fmt == 0 or (speed == 0 and i > 0):
-            break
-        frames.append((fmt, off))
-        off += {1: 1024, 2: 2048, 3: 1536}[fmt]
         if speed == 0:
+            if i == 0 and fmt:                             # one still icon with no speed set
+                layout.append((fmt, off, 0))
+                off += {1: 1024, 2: 2048, 3: 1536}[fmt]
             break
-    shared_pal = data[off:off + 512]                       # after all icons, for CI8 "shared"
-    icon = None
-    if frames:
-        fmt, o = frames[0]
+        layout.append((fmt, off, speed))
+        if fmt:
+            off += {1: 1024, 2: 2048, 3: 1536}[fmt]
+    shared_pal = data[off:off + 512]
+    frames, last = [], None
+    for fmt, o, ticks in layout:
+        img = last
         if fmt == 2:
             px = _decode_rgb5a3(data[o:o + 2048], 32, 32)
+            img = Icon("rgba", px, 32, 32) if px else last
         elif fmt == 3:
             px = _decode_ci8(data[o:o + 1024], data[o + 1024:o + 1536], 32, 32)
-        else:
+            img = Icon("rgba", px, 32, 32) if px else last
+        elif fmt == 1:
             px = _decode_ci8(data[o:o + 1024], shared_pal, 32, 32)
-        icon = Icon("rgba", px, 32, 32) if px else None
-    return banner, icon
+            img = Icon("rgba", px, 32, 32) if px else last
+        if img is not None:
+            frames.append((img, max(1, ticks)))
+            last = img
+    return banner, frames
 
 
 def parse_gci(path: Path) -> GCSave | None:
