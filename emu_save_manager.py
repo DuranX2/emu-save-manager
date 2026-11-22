@@ -685,6 +685,8 @@ class App(tk.Tk):
         cards_menu.add_command(label="GameCube Card Manager…", command=self.open_gc_cards)
         cards_menu.add_command(label="Wii Save Manager…", command=self.open_wii_saves)
         cards_menu.add_command(label="PSP Save Manager…", command=self.open_psp_saves)
+        cards_menu.add_separator()
+        cards_menu.add_command(label="RetroArch Save Manager…", command=self.open_ra_saves)
         cards["menu"] = cards_menu
         cards.pack(side="right", padx=6)
         self.cards_menu = cards_menu
@@ -1086,6 +1088,10 @@ class App(tk.Tk):
     def open_psp_saves(self):
         from ui_pspsaves import PSPSaveDialog
         PSPSaveDialog(self)
+
+    def open_ra_saves(self):
+        from ui_rasaves import RASaveDialog
+        RASaveDialog(self)
 
     def open_gc_cards(self):
         from ui_gccards import GCCardDialog

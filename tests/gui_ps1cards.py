@@ -182,7 +182,8 @@ import emu_save_manager as esm
 esm.App.open_folder = lambda self, p: None
 main = esm.App()
 main.cfg["overrides"] = {"DuckStation::Memory Cards": str(mem)}
-assert "PS1 Card Manager…" in [main.cards_menu.entrycget(i, "label") for i in range(main.cards_menu.index("end") + 1)]
+assert "PS1 Card Manager…" in [main.cards_menu.entrycget(i, "label") for i in range(main.cards_menu.index("end") + 1)
+          if main.cards_menu.type(i) != "separator"]
 main.open_ps1_cards(); pump(1)
 dlg = [w for w in main.winfo_children() if isinstance(w, U.PS1CardDialog)]
 assert dlg and len(dlg[0].view.cards) == 3 and dlg[0].view.slot[0] == ("card", mem / "new_card_1.mcd")   # the newest card

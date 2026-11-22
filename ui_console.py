@@ -464,7 +464,7 @@ class ConsoleBase(tk.Frame):
                           width=split - 80, font=self.f_body, tags="ui")
         for i, it in enumerate(items):
             x0, y0, x1, y1 = self.tile_box(i)
-            if y1 < head or y0 > h - foot:
+            if y0 < head or y1 > h - foot + 6:          # only whole tiles: never over the header or footer
                 continue
             cx = (x0 + x1) // 2
             sel = i == self.cursor[self.side]
@@ -554,7 +554,8 @@ class Overlay:
         self.title, self.message, self.options = title, message, options
         self.on_choose, self.cancel_key = on_choose, cancel_key
         self.index = 0
-        self.boxes = []
+        self.top = 0                  # first option shown when the list is longer than the window
+        self.boxes = []               # [(option index, box)]
 
     def act(self, action):
         if action == "up":
@@ -575,7 +576,7 @@ class Overlay:
         self.on_choose(key)
 
     def click(self, x, y):
-        for i, (x0, y0, x1, y1) in enumerate(self.boxes):
+        for i, (x0, y0, x1, y1) in self.boxes:
             if x0 <= x <= x1 and y0 <= y <= y1:
                 self.index = i
                 self.choose(self.options[i][0])
@@ -593,6 +594,14 @@ class Overlay:
             msg_h = (bb[3] - bb[1]) + 16 if bb else 0
         row = v.f_body.metrics("linespace") + 14
         bh = min(70 + msg_h + row * len(self.options) + 16, h - 40)
+        fit = max(1, (bh - 70 - msg_h - 16) // row)
+        if len(self.options) > fit:
+            fit = max(1, fit - 1)                         # room for the "more" hint
+        if self.index < self.top:
+            self.top = self.index
+        elif self.index >= self.top + fit:
+            self.top = self.index - fit + 1
+        self.top = max(0, min(self.top, max(0, len(self.options) - fit)))
         x0, y0 = (w - bw) // 2, (h - bh) // 2
         c.create_rectangle(0, 0, w, h, fill="#000000", stipple="gray50", outline="", tags="ui")
         c.create_rectangle(x0, y0, x0 + bw, y0 + bh, fill="#121a3d", outline=ACCENT, width=2, tags="ui")
@@ -604,14 +613,24 @@ class Overlay:
                           width=bw - 48, tags="ui")
             y += msg_h
         self.boxes = []
-        for i, (_k, label) in enumerate(self.options):
+        shown = list(enumerate(self.options))[self.top:self.top + fit]
+        for i, (_k, label) in shown:
             box = (x0 + 16, y, x0 + bw - 16, y + row - 4)
-            self.boxes.append(box)
+            self.boxes.append((i, box))
             if i == self.index:
                 c.create_rectangle(*box, fill="#24336e", outline=ACCENT, tags="ui")
+            room = bw - 64
+            if v.f_body.measure(label) > room:
+                while len(label) > 4 and v.f_body.measure(label + "…") > room:
+                    label = label[:-1]
+                label = label.rstrip() + "…"
             c.create_text(box[0] + 14, (box[1] + box[3]) // 2, text=label, fill=TEXT, font=v.f_body,
                           anchor="w", tags="ui")
             y += row
+        if len(shown) < len(self.options):
+            more = (("▲ " if self.top > 0 else "") + f"{self.index + 1} of {len(self.options)}"
+                    + (" ▼" if self.top + fit < len(self.options) else ""))
+            c.create_text(x0 + bw // 2, y + row // 2 - 6, text=more, fill=DIM, font=v.f_small, tags="ui")
 
 
 class ConsolePrompts:

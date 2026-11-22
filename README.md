@@ -18,6 +18,9 @@ Keep all `.py` files in this folder together and run:
 | `safecopy.py` | staged, verified folder copies and safety folders shared by the folder-based managers |
 | `pspsaves.py` | PSP saves on PPSSPP's memory stick and their backups - no GUI |
 | `ui_pspsaves.py` | the PSP Save Manager window |
+| `rasaves.py` | RetroArch saves matched to games: settings, playlists, orphans, tidying, one-game backups - no GUI |
+| `raconvert.py` | moving in-game saves between RetroArch cores and standalone emulators - no GUI |
+| `ui_rasaves.py` | the RetroArch Save Manager window |
 | `wiinand.py` | Wii saves in Dolphin's NAND and their backups: banner.bin, verified folder copies - no GUI |
 | `ui_wiisaves.py` | the Wii Save Manager window |
 | `gcfolder.py` | GameCube saves in Dolphin's GCI folders: list, verified copy / move, delete, export - no GUI |
@@ -225,6 +228,34 @@ picture fills the panel behind its game title, save title, detail lines, size, r
 - Save folders are copied as they are (nothing is decrypted or re-signed), staged next to their
   destination, every file read back and compared, then swapped in. Replaced, moved-away and deleted
   saves go to `<backup folder>/_psp_safety/` (newest 20 changes kept). Close PPSSPP first.
+
+## RetroArch Save Manager
+**Memory Cards → RetroArch Save Manager…** shows every game that has RetroArch saves, with its box
+art, in the same controller-friendly style as the console managers. **Backups**
+(`<backup folder>/RetroArch saves/<system>/<game>/<date>/`) is the second slot.
+- Saves are matched to game files by name (RetroArch names saves after the game file) to know each
+  game's system, core and box art. Game files are found in RetroArch's playlists, EmuDeck's `roms`
+  folder, the ROM Library's local folder, and folders added with **Y ▸ Game folders…**.
+- Box art comes from RetroArch's own thumbnails and ES-DE's downloads, and (unless turned off in the
+  **Y** menu) from the libretro thumbnails server, cached in `~/.emu_save_manager/ra_art/`.
+- The panel shows the in-game save, the save states (slot numbers and dates) and the states'
+  screenshots, cycling. **View** (Select / F2) filters by system.
+- **A** options: **back up** a game (save, states and screenshots, dated; keep as many as you like),
+  **restore** one, delete, and per system:
+  - PlayStation: copy the memory card to DuckStation (offering the name DuckStation uses for the
+    game's card), or use a DuckStation card in RetroArch.
+  - Game Boy / Color / Advance, DS: export a `.sav` for standalone emulators (DeSmuME's footer left
+    off), or import one.
+  - Nintendo 64: split Mupen64Plus-Next's combined save into `.eep/.mpk/.sra/.fla` (Mupen64Plus /
+    RMG byte order, or Project64's), or combine those files back.
+- **Find saves with no game file** (marked **?**): saves left behind when a game file was renamed,
+  with the closest game files offered to rename them to.
+- **Tidy scattered saves** (marked **↔**): files left where RetroArch no longer looks after its
+  "sort by core / content folder" or "next to content" settings changed are moved to where it looks
+  now; when there are copies in several places the newest is kept and the others go to the safety
+  folder. Two games with the same name on different systems are never merged into one file.
+- Replaced, moved-away and deleted files go to `<backup folder>/_retroarch_safety/` (newest 20
+  changes kept); every copy is read back before it's put in place. Close RetroArch first.
 
 ## Wii Save Manager
 **Memory Cards → Wii Save Manager…** opens a console-style, controller-friendly window for the game

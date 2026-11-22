@@ -89,3 +89,85 @@ def folder_stats(path: Path):
             count += 1
             newest = max(newest, st.st_mtime)
     return size, count, newest
+
+
+def _write_verified(data: bytes, dest: Path):
+    """Write next to dest, fsync, read back, then swap in. Returns nothing; raises CopyError."""
+    dest = Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_name(dest.name + ".copying")
+    try:
+        with open(tmp, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        if tmp.read_bytes() != data:
+            raise CopyError(f"{dest.name}: the copy didn't read back correctly")
+    except Exception:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
+    return tmp
+
+
+def write_file_verified(data: bytes, dest: Path, safety: Safety | None = None, label: str = "replaced"):
+    """Write bytes to dest safely; an existing dest goes to the safety folder first."""
+    dest = Path(dest)
+    tmp = _write_verified(data, dest)
+    if dest.exists():
+        if safety is None:
+            tmp.unlink()
+            raise CopyError(f"{dest} already exists")
+        safety.keep(dest, label)
+    os.replace(tmp, dest)
+
+
+def copy_file_verified(src: Path, dest: Path, safety: Safety | None = None, label: str = "replaced"):
+    """Copy one file safely (verified, timestamps kept); an existing dest goes to the safety folder."""
+    src, dest = Path(src), Path(dest)
+    tmp = _write_verified(src.read_bytes(), dest)
+    shutil.copystat(src, tmp)
+    if dest.exists():
+        if safety is None:
+            tmp.unlink()
+            raise CopyError(f"{dest} already exists")
+        safety.keep(dest, label)
+    os.replace(tmp, dest)
+
+
+def copy_files_verified(pairs, dest_dir: Path, extra=None) -> int:
+    """Copy [(src file, relative path)] into a new folder dest_dir, staged and read back first,
+    plus extra {relative path: bytes}. dest_dir must not exist yet."""
+    dest_dir = Path(dest_dir)
+    if dest_dir.exists():
+        raise CopyError(f"{dest_dir} already exists")
+    stage = dest_dir.with_name(dest_dir.name + ".copying")
+    if stage.exists():
+        shutil.rmtree(stage)
+    stage.mkdir(parents=True)
+    try:
+        for src, rel in pairs:
+            t = stage / rel
+            t.parent.mkdir(parents=True, exist_ok=True)
+            data = Path(src).read_bytes()
+            with open(t, "wb") as f:
+                f.write(data)
+                f.flush()
+                os.fsync(f.fileno())
+            shutil.copystat(src, t)
+            if t.read_bytes() != data:
+                raise CopyError(f"{Path(src).name}: the copy didn't read back correctly")
+        for rel, data in (extra or {}).items():
+            t = stage / rel
+            t.parent.mkdir(parents=True, exist_ok=True)
+            with open(t, "wb") as f:
+                f.write(data)
+                f.flush()
+                os.fsync(f.fileno())
+    except Exception:
+        shutil.rmtree(stage, ignore_errors=True)
+        raise
+    os.replace(stage, dest_dir)
+    return len(pairs)
