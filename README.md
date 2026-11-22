@@ -15,6 +15,9 @@ Keep all `.py` files in this folder together and run:
 | `ui_console.py` | the shared parts of the console-style card managers (look, controls, in-window menus and questions) |
 | `ps1card.py` | PS1 memory cards: read, verified copy / move, delete, export (.mcs), blank cards - no GUI |
 | `ui_ps1cards.py` | the PS1 Card Manager window |
+| `safecopy.py` | staged, verified folder copies and safety folders shared by the folder-based managers |
+| `pspsaves.py` | PSP saves on PPSSPP's memory stick and their backups - no GUI |
+| `ui_pspsaves.py` | the PSP Save Manager window |
 | `wiinand.py` | Wii saves in Dolphin's NAND and their backups: banner.bin, verified folder copies - no GUI |
 | `ui_wiisaves.py` | the Wii Save Manager window |
 | `gcfolder.py` | GameCube saves in Dolphin's GCI folders: list, verified copy / move, delete, export - no GUI |
@@ -211,6 +214,17 @@ game it belongs to (from the game-name lookup), its region and a map of the card
   reading the card back. Deleting marks the save deleted, as the console does. Damaged saves are
   shown with the problem and never copied. `.gme`/`.vgs` cards keep their headers; PSP `.vmp` cards
   are read only. Close DuckStation / RetroArch first.
+
+## PSP Save Manager
+**Memory Cards → PSP Save Manager…** opens a console-style, controller-friendly window for the saves
+on PPSSPP's memory stick (`PSP/SAVEDATA/<folder>`), with **Backups** (`<backup folder>/PSP saves/`)
+as a second place to keep them. Each save shows its own icon; the selected save's own background
+picture fills the panel behind its game title, save title, detail lines, size, region and date.
+- **A** options: back up / restore / move to the other slot, delete, details. **X** marks, **Y** menu,
+  **B** back, **LB / RB** switch slot. Keyboard and mouse work too.
+- Save folders are copied as they are (nothing is decrypted or re-signed), staged next to their
+  destination, every file read back and compared, then swapped in. Replaced, moved-away and deleted
+  saves go to `<backup folder>/_psp_safety/` (newest 20 changes kept). Close PPSSPP first.
 
 ## Wii Save Manager
 **Memory Cards → Wii Save Manager…** opens a console-style, controller-friendly window for the game

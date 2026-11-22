@@ -160,7 +160,7 @@ esm.App.open_folder = lambda self, p: None
 main = esm.App()
 main.cfg["overrides"] = {"Dolphin::Wii Saves": str(wii)}
 labels = [main.cards_menu.entrycget(i, "label") for i in range(main.cards_menu.index("end") + 1)]
-assert labels == ["PS2 Card Manager…", "PS1 Card Manager…", "GameCube Card Manager…", "Wii Save Manager…"], labels
+assert labels[:4] == ["PS2 Card Manager…", "PS1 Card Manager…", "GameCube Card Manager…", "Wii Save Manager…"], labels
 main.open_wii_saves(); pump(1)
 dlg = [w for w in main.winfo_children() if isinstance(w, U.WiiSaveDialog)]
 assert dlg and dlg[0].view.items[0]
