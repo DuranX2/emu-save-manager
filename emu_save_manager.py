@@ -681,6 +681,7 @@ class App(tk.Tk):
         cards = ttk.Menubutton(top, text="Memory Cards", width=13)
         cards_menu = tk.Menu(cards, tearoff=False)
         cards_menu.add_command(label="PS2 Card Manager…", command=self.open_ps2_cards)
+        cards_menu.add_command(label="PS1 Card Manager…", command=self.open_ps1_cards)
         cards_menu.add_command(label="GameCube Card Manager…", command=self.open_gc_cards)
         cards["menu"] = cards_menu
         cards.pack(side="right", padx=6)
@@ -1071,6 +1072,10 @@ class App(tk.Tk):
     def open_ps2_cards(self):
         from ui_ps2cards import PS2CardDialog
         PS2CardDialog(self)
+
+    def open_ps1_cards(self):
+        from ui_ps1cards import PS1CardDialog
+        PS1CardDialog(self)
 
     def open_gc_cards(self):
         from ui_gccards import GCCardDialog

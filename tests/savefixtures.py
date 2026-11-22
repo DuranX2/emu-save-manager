@@ -306,3 +306,26 @@ def ps2_icon(shapes=1, compressed=False, textured=True, color=(128, 128, 128, 12
         else:
             out += b"".join(struct.pack("<H", v) for _ in range(128) for v in row)
     return bytes(out)
+
+
+# ---------------------------------------------------------------------------
+# PS1 saves (block data for ps1card.Card.write_save)
+# ---------------------------------------------------------------------------
+def ps1_save_blocks(title, blocks=1, frames=1, colors=((31, 0, 0), (0, 0, 31)), fill=0x21):
+    """A PS1 save's data: SC title frame with `frames` icon frames (two-colour stripes; each frame
+    uses a different pixel pattern), then filler. `blocks` x 8 KB."""
+    data = bytearray(8192 * blocks)
+    data[0:2] = b"SC"
+    data[2] = {1: 0x11, 2: 0x12, 3: 0x13}[frames]
+    data[3] = blocks
+    t = title.encode("cp932")[:64]
+    data[4:4 + len(t)] = t
+    for k, (r, g, b) in enumerate(colors, start=1):
+        struct.pack_into("<H", data, 0x60 + 2 * k, r | g << 5 | b << 10)
+    for f in range(frames):
+        pattern = (fill, 0x11, 0x22)[f]
+        for k in range(0x80):
+            data[0x80 * (f + 1) + k] = pattern
+    for i in range(0x200, len(data)):
+        data[i] = (i * 7 + blocks) & 0xFF
+    return bytes(data)

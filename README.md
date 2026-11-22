@@ -13,6 +13,8 @@ Keep all `.py` files in this folder together and run:
 | `ps2folder.py` | PCSX2 *folder* memory card engine (same interface as `ps2mc`) - no GUI |
 | `ui_ps2cards.py` | PS2 Card Manager window |
 | `ui_console.py` | the shared parts of the console-style card managers (look, controls, in-window menus and questions) |
+| `ps1card.py` | PS1 memory cards: read, verified copy / move, delete, export (.mcs), blank cards - no GUI |
+| `ui_ps1cards.py` | the PS1 Card Manager window |
 | `gcfolder.py` | GameCube saves in Dolphin's GCI folders: list, verified copy / move, delete, export - no GUI |
 | `ui_gccards.py` | the GameCube Card Manager window |
 | `ui_ps2console.py` | the PS2 Card Manager's console view (controller-friendly, 3D save icons) |
@@ -191,6 +193,22 @@ console artwork, fonts or sounds).
   questions are asked inside the window. Exports go to `<backup folder>/PS2 exports/`.
   Creating, renaming and deleting card files, and importing `.psu` files, are in the list view.
 - The view you used last is remembered.
+
+## PS1 Card Manager
+**Memory Cards → PS1 Card Manager…** opens a console-style, controller-friendly window for
+PlayStation memory card files: DuckStation's cards (`.mcd`, per-game and shared) and RetroArch's
+`.srm` cards, plus **Exported saves** (`<backup folder>/PS1 exports/`, one `.mcs` file per save,
+the format DuckStation exports and imports). Each save shows its animated icon, its own title, the
+game it belongs to (from the game-name lookup), its region and a map of the card's 15 blocks.
+- **A** options: copy or move to the other slot, delete, export a copy to the backups, details.
+  **X** marks, **Y** menu (choose each slot, create a new blank card, open the folder, refresh,
+  close), **B** back, **LB / RB** switch slot. Keyboard and mouse work too.
+- Cards are written the way DuckStation writes them (directory entries, links and checksums). Every
+  change writes a new card image, reads it back, then replaces the card; the card as it was is
+  copied first to `<backup folder>/_ps1_card_safety/` (newest 20 changes kept). Copies are verified by
+  reading the card back. Deleting marks the save deleted, as the console does. Damaged saves are
+  shown with the problem and never copied. `.gme`/`.vgs` cards keep their headers; PSP `.vmp` cards
+  are read only. Close DuckStation / RetroArch first.
 
 ## GameCube Card Manager
 **Memory Cards → GameCube Card Manager…** opens a console-style, controller-friendly window for
