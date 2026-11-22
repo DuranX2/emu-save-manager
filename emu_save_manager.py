@@ -683,6 +683,7 @@ class App(tk.Tk):
         cards_menu.add_command(label="PS2 Card Manager…", command=self.open_ps2_cards)
         cards_menu.add_command(label="PS1 Card Manager…", command=self.open_ps1_cards)
         cards_menu.add_command(label="GameCube Card Manager…", command=self.open_gc_cards)
+        cards_menu.add_command(label="Wii Save Manager…", command=self.open_wii_saves)
         cards["menu"] = cards_menu
         cards.pack(side="right", padx=6)
         self.cards_menu = cards_menu
@@ -1076,6 +1077,10 @@ class App(tk.Tk):
     def open_ps1_cards(self):
         from ui_ps1cards import PS1CardDialog
         PS1CardDialog(self)
+
+    def open_wii_saves(self):
+        from ui_wiisaves import WiiSaveDialog
+        WiiSaveDialog(self, self.current if self.current in ("Dolphin", "PrimeHack") else "Dolphin")
 
     def open_gc_cards(self):
         from ui_gccards import GCCardDialog

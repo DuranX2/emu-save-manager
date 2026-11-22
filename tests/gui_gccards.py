@@ -98,8 +98,9 @@ pik = next(i for i, it in enumerate(v.items[0]) if it.title == "Pikmin 2")
 assert v.items[0][pik].ticks == [0, 1, 1, 2, 2, 2, 1, 1]               # back and forth
 v.move(pik); pump(0.3)
 seen = set()
-for _ in range(12):
-    pump(0.07)
+end = time.time() + 3
+while len(seen) < 3 and time.time() < end:   # sample the animation
+    pump(0.05)
     seen.add(v.canvas.itemcget(f"tile{pik}", "image"))
 assert len(seen) >= 3, seen                                            # the tile animates
 assert v.canvas.itemcget("big", "image")

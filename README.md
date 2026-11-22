@@ -15,6 +15,8 @@ Keep all `.py` files in this folder together and run:
 | `ui_console.py` | the shared parts of the console-style card managers (look, controls, in-window menus and questions) |
 | `ps1card.py` | PS1 memory cards: read, verified copy / move, delete, export (.mcs), blank cards - no GUI |
 | `ui_ps1cards.py` | the PS1 Card Manager window |
+| `wiinand.py` | Wii saves in Dolphin's NAND and their backups: banner.bin, verified folder copies - no GUI |
+| `ui_wiisaves.py` | the Wii Save Manager window |
 | `gcfolder.py` | GameCube saves in Dolphin's GCI folders: list, verified copy / move, delete, export - no GUI |
 | `ui_gccards.py` | the GameCube Card Manager window |
 | `ui_ps2console.py` | the PS2 Card Manager's console view (controller-friendly, 3D save icons) |
@@ -209,6 +211,21 @@ game it belongs to (from the game-name lookup), its region and a map of the card
   reading the card back. Deleting marks the save deleted, as the console does. Damaged saves are
   shown with the problem and never copied. `.gme`/`.vgs` cards keep their headers; PSP `.vmp` cards
   are read only. Close DuckStation / RetroArch first.
+
+## Wii Save Manager
+**Memory Cards → Wii Save Manager…** opens a console-style, controller-friendly window for the game
+saves in Dolphin's (or PrimeHack's) emulated Wii system memory (`Wii/title/<type>/<id>/data`), with
+**Backups** (`<backup folder>/Wii saves/`, one folder per game) playing the part of the SD card.
+Each save shows its animated icon and, when selected, its banner, title, subtitle and size in Wii
+blocks. System software (IOS, the System Menu, system channels) is never listed.
+- **A** options: back up / restore / move to the other slot, delete, details. **X** marks, **Y** menu
+  (choose each slot, including PrimeHack's system memory, open the folder, refresh, close),
+  **B** back, **LB / RB** switch slot.
+- Whole save folders are copied: staged next to their destination, every file read back and
+  compared, then swapped in. Replaced, moved-away and deleted saves go to
+  `<backup folder>/_wii_safety/` (newest 20 changes kept). Backups are plain copies of Dolphin's
+  folders: no Wii console keys are used (the Wii's own SD-card format is encrypted, so it isn't
+  offered). Dolphin accepts restored folders as they are. Close Dolphin first.
 
 ## GameCube Card Manager
 **Memory Cards → GameCube Card Manager…** opens a console-style, controller-friendly window for

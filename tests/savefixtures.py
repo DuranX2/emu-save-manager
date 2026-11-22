@@ -110,13 +110,19 @@ def gc_card(path, saves):
     Path(path).write_bytes(card)
 
 
-def wii_banner(path, title="Super Mario Galaxy", sub="Mario: 3 stars"):
-    b = bytearray(0xA0 + 0x6000 + 0x1200)
+def wii_banner(path, title="Super Mario Galaxy", sub="Mario: 3 stars", icons=1, speed=None, flags=0):
+    b = bytearray(0xA0 + 0x6000 + 0x1200 * icons)
     b[0:4] = b"WIBN"
+    struct.pack_into(">IH", b, 4, flags, speed if speed is not None else
+                     sum(min(3, k + 1) << (2 * k) for k in range(icons)))
     b[0x20:0x20 + len(title) * 2] = title.encode("utf-16-be")
     b[0x60:0x60 + len(sub) * 2] = sub.encode("utf-16-be")
     b[0xA0:0x60A0] = encode_rgb5a3(quad_image(192, 64, BLUE, GREEN), 192, 64)
     b[0x60A0:0x60A0 + 0x1200] = encode_rgb5a3(quad_image(48, 48, RED, GREEN), 48, 48)
+    for k in range(1, icons):                 # further frames: solid colours
+        col = (BLUE, GREEN, RED)[k % 3]
+        o = 0x60A0 + 0x1200 * k
+        b[o:o + 0x1200] = encode_rgb5a3([[col] * 48 for _ in range(48)], 48, 48)
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     Path(path).write_bytes(bytes(b))
 

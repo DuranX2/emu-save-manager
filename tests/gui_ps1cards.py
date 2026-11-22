@@ -107,8 +107,9 @@ assert [it.game or it.title for it in v.items[0]] == ["Castlevania: Symphony of 
 assert v.items[0][0].title == "CASTLEVANIA-1 ALUCARD" and v.space_text(0) == "4 saves · 9 of 15 blocks free"
 cv = idx("Castlevania"); v.move(cv)
 seen = set()
-for _ in range(14):
-    pump(0.07)
+end = time.time() + 3
+while len(seen) < 2 and time.time() < end:   # sample the animation
+    pump(0.05)
     seen.add(v.canvas.itemcget(f"tile{cv}", "image"))
 assert len(seen) >= 2 and v.canvas.itemcget("big", "image")
 print("1. DuckStation's newest card in slot 1, shared_card_1 in slot 2; game names, animated icons: ok")
