@@ -613,6 +613,18 @@ class App(tk.Tk):
         self._start_titles()
         self._start_updates()
         self.after(2500, self._ensure_watcher)
+        self.after(1500, self._steam_art)
+
+    def _steam_art(self):
+        """Give this app's Steam shortcut (however it was added) its library artwork."""
+        try:
+            import steamshortcut
+            written = steamshortcut.refresh_art()
+        except Exception:  # noqa - artwork must never get in the way
+            return
+        if written:
+            self.set_status("Added this app's artwork to its Steam shortcut "
+                            "(it shows in the library after Steam restarts).")
 
     # ---- updates -----------------------------------------------------------
     def _start_updates(self):

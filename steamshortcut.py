@@ -12,6 +12,8 @@ shortcuts.vdf is backed up before every change.
 
 import binascii
 import os
+import hashlib
+import json
 import shutil
 import struct
 import subprocess
@@ -116,6 +118,9 @@ def steam_roots():
     home = Path.home()
     cands = [home / ".local/share/Steam", home / ".steam/steam", home / ".steam/root",
              home / ".var/app/com.valvesoftware.Steam/data/Steam"]
+    if sys.platform == "win32":
+        cands += [Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Steam",
+                  Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Steam"]
     seen, out = set(), []
     for c in cands:
         try:
@@ -189,8 +194,106 @@ def art_dir() -> Path:
 
 
 def _is_ours(entry) -> bool:
-    exe = str(_get(entry, "Exe", "") or "")
-    return _get(entry, "AppName", "") == APP_NAME or Path(exe.strip('"')).name == "EmuSaveManager"
+    exe = str(_get(entry, "Exe", "") or "").strip().strip('"')
+    name = exe.replace("\\", "/").rsplit("/", 1)[-1]
+    return _get(entry, "AppName", "") == APP_NAME or name in ("EmuSaveManager", "EmuSaveManager.exe")
+
+
+# ---- artwork --------------------------------------------------------------------------------
+# Steam looks for <id>p.png, <id>.png, <id>_hero.png, <id>_logo.png in userdata/<account>/config/grid
+# (also .jpg / .jpeg / .webp when the user picked their own). Our files are written only where there
+# is nothing yet, or where the file there is one we wrote earlier: artwork the user set in Steam
+# is never replaced.
+ART_EXTS = (".png", ".jpg", ".jpeg", ".webp")
+
+
+def _state_path() -> Path:
+    return Path.home() / ".emu_save_manager" / "steam_art.json"
+
+
+def _load_state():
+    try:
+        return json.loads(_state_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_state(state):
+    try:
+        _state_path().parent.mkdir(parents=True, exist_ok=True)
+        _state_path().write_text(json.dumps(state, indent=1), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _sha1(data: bytes) -> str:
+    return hashlib.sha1(data).hexdigest()
+
+
+def _put_art(grid: Path, sid: int, art: Path, state: dict, force_names=()) -> list:
+    """Write our artwork for shortcut sid into grid where allowed; returns the files written."""
+    written = []
+    grid.mkdir(parents=True, exist_ok=True)
+    for src, suffix in ART_FILES.items():
+        f = art / src
+        if not f.is_file():
+            continue
+        data = f.read_bytes()
+        base = f"{sid}{suffix[:-4]}"                       # e.g. "1234p" from "p.png"
+        dest = grid / f"{sid}{suffix}"
+        others = [grid / (base + e) for e in ART_EXTS if e != ".png" and (grid / (base + e)).exists()]
+        if others and suffix not in force_names:
+            continue                                       # the user picked their own (.jpg etc.)
+        if dest.exists():
+            try:
+                cur = dest.read_bytes()
+            except OSError:
+                continue
+            if cur == data:
+                state[str(dest)] = _sha1(data)
+                continue
+            if state.get(str(dest)) != _sha1(cur) and suffix not in force_names:
+                continue                                   # not ours: leave it
+        tmp = dest.with_name(dest.name + ".esm_tmp")
+        tmp.write_bytes(data)
+        os.replace(tmp, dest)
+        state[str(dest)] = _sha1(data)
+        written.append(dest)
+    return written
+
+
+def find_ours(config_dirs=None):
+    """[(config dir, shortcut id, entry)] for every shortcut that starts this app, however it was added."""
+    out = []
+    for cfg in (config_dirs if config_dirs is not None else user_dirs()):
+        vdf = Path(cfg) / "shortcuts.vdf"
+        try:
+            root = loads(vdf.read_bytes())
+        except (OSError, VdfError):
+            continue
+        for _t, _k, e in _get(root, "shortcuts") or []:
+            if isinstance(e, list) and _is_ours(e):
+                sid = struct.unpack("<I", struct.pack("<i", _get(e, "appid") or 0))[0]
+                if not sid:
+                    sid = shortcut_id(str(_get(e, "Exe", "")), str(_get(e, "AppName", "")))
+                out.append((Path(cfg), sid, e))
+    return out
+
+
+def refresh_art(config_dirs=None, art=None) -> list:
+    """Give every shortcut of this app (added by us, by hand in Steam or by another tool) its
+    artwork, without touching shortcuts.vdf: safe while Steam (and Game Mode) is running; Steam
+    shows new pictures after it restarts. Returns the files written."""
+    art = Path(art or art_dir())
+    state = _load_state()
+    written = []
+    for cfg, sid, _e in find_ours(config_dirs):
+        try:
+            written += _put_art(cfg / "grid", sid, art, state)
+        except OSError:
+            continue
+    _save_state(state)
+    return written
 
 
 def add(exe: str, start_dir: str, art=None, config_dirs=None, log=print) -> int:
@@ -224,10 +327,9 @@ def add(exe: str, start_dir: str, art=None, config_dirs=None, log=print) -> int:
                 _set(entry, 0x02, "appid", struct.unpack("<i", struct.pack("<I", sid))[0])
             log(f"Updating the existing '{APP_NAME}' shortcut in Steam ({cfg.parent.name}).")
         grid = cfg / "grid"
-        grid.mkdir(parents=True, exist_ok=True)
-        for src, suffix in ART_FILES.items():
-            if (art / src).is_file():
-                shutil.copyfile(art / src, grid / f"{sid}{suffix}")
+        state = _load_state()
+        _put_art(grid, sid, art, state, force_names=("_icon.png",))
+        _save_state(state)
         fields = [(0x01, "AppName", APP_NAME), (0x01, "Exe", exe_q), (0x01, "StartDir", f'"{start_dir}"'),
                   (0x01, "icon", str(grid / f"{sid}_icon.png")), (0x01, "ShortcutPath", ""),
                   (0x01, "LaunchOptions", ""), (0x02, "IsHidden", 0), (0x02, "AllowDesktopConfig", 1),

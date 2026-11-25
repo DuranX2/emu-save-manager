@@ -111,4 +111,40 @@ r = subprocess.run(["bash", str(pkg / "install.sh"), "--remove"], env=env, captu
 assert r.returncode == 0 and (T / "calls.txt").read_text().strip() == "--remove-from-steam"
 assert not (H / ".local/share/icons/hicolor/256x256/apps/emu-save-manager.png").exists()
 print("8. install.sh: icon in the menu entry, Steam step on --steam, told how when not asked, removed on --remove: ok")
+# ---- artwork for a shortcut made some other way (Steam's "Add a Non-Steam Game", another tool) ----
+cfg3 = H / ".local/share/Steam/userdata/777/config"; cfg3.mkdir(parents=True)
+hand = (b"\x00shortcuts\0" + other
+        + b"\x00" + b"1\0" + i("appid", -55555555) + s("AppName", "EmuSaveManager")
+        + s("Exe", '"/home/deck/Applications/EmuSaveManager/EmuSaveManager"') + s("icon", "") + b"\x08\x08\x08")
+(cfg3 / "shortcuts.vdf").write_bytes(hand)
+win = (b"\x00shortcuts\0\x000\0" + i("appid", -44444444) + s("AppName", "Saves")
+       + s("Exe", '"C:\\Apps\\EmuSaveManager\\EmuSaveManager.exe"') + b"\x08\x08\x08")
+cfg4 = H / ".local/share/Steam/userdata/888/config"; cfg4.mkdir(parents=True)
+(cfg4 / "shortcuts.vdf").write_bytes(win)
+hid = struct.unpack("<I", struct.pack("<i", -55555555))[0]
+wid = struct.unpack("<I", struct.pack("<i", -44444444))[0]
+g3 = cfg3 / "grid"; g3.mkdir()
+(g3 / f"{hid}p.jpg").write_bytes(b"the user's own cover")              # picked in Steam: keep
+(g3 / f"{hid}_hero.png").write_bytes(b"the user's own banner")         # also theirs
+before = (cfg3 / "shortcuts.vdf").read_bytes()
+written = ss.refresh_art([cfg3, cfg4])
+names = sorted(p.name for p in written)
+assert f"{hid}.png" in names and f"{hid}_logo.png" in names and f"{hid}_icon.png" in names, names
+assert f"{hid}p.png" not in names and (g3 / f"{hid}p.jpg").read_bytes() == b"the user's own cover"
+assert (g3 / f"{hid}_hero.png").read_bytes() == b"the user's own banner"
+assert (cfg4 / "grid" / f"{wid}p.png").read_bytes() == (art / "capsule.png").read_bytes(), "Windows-style path"
+assert (cfg3 / "shortcuts.vdf").read_bytes() == before, "shortcuts.vdf is never changed by a refresh"
+assert ss.refresh_art([cfg3, cfg4]) == [], "nothing to do the second time"
+print("9. artwork for shortcuts added by hand (and Windows paths); the user's own pictures kept; vdf untouched: ok")
+
+# our own artwork changes in a later version: files we wrote are replaced, the user's are not
+new_art = T / "newart"; shutil.copytree(art, new_art)
+(new_art / "wide.png").write_bytes((art / "wide.png").read_bytes() + b"v2")
+written = ss.refresh_art([cfg3, cfg4], art=new_art)
+assert sorted(p.name for p in written) == sorted([f"{hid}.png", f"{wid}.png"]), written
+assert (g3 / f"{hid}_hero.png").read_bytes() == b"the user's own banner"
+(cfg4 / "grid" / f"{wid}.png").write_bytes(b"changed in Steam by the user")
+assert ss.refresh_art([cfg4], art=art) == [], "a picture the user replaced isn't overwritten"
+print("10. updated artwork replaces only files the app wrote itself: ok")
+
 print("STEAM SHORTCUT OK")

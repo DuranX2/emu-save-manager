@@ -103,6 +103,11 @@ list changes; the installer closes it and starts it again. Run `./install.sh --s
 question, or later: `~/.local/share/EmuSaveManager/EmuSaveManager --add-to-steam`
 (`--remove-from-steam` takes it out; `./install.sh --remove` does too). Steam's `shortcuts.vdf` is backed up
 next to itself before every change. The artwork is in `packaging/art/` (`tools/make_art.py` draws it).
+Each time the app starts it also checks the artwork of every Steam shortcut that starts it - including
+one made with Steam's own *Add a Non-Steam Game* or another tool - and fills in any picture that's
+missing (library tile, wide tile, banner, logo, icon). It only writes picture files, never
+`shortcuts.vdf`, so it's safe while Steam runs; new pictures show after Steam restarts. Pictures you set
+yourself in Steam are never replaced; only files the app wrote itself are updated.
 In Game Mode, use the touchscreen or the trackpad as the mouse, and Steam + X for the keyboard.
 
 ## Readable save lists
