@@ -265,6 +265,12 @@ art, in the same controller-friendly style as the console managers.
   "sort by core / content folder" or "next to content" settings changed are moved to where it looks
   now; when there are copies in several places the newest is kept and the others go to the safety
   folder. Two games with the same name on different systems are never merged into one file.
+- It always shows the RetroArch folders the main window uses (the ones that sync). If RetroArch's
+  own settings keep its saves somewhere else (for example when EmuDeck's link from RetroArch's
+  `saves` folder to `Emulation/saves/retroarch` is missing), a **Fix saves** card comes first on the
+  systems screen. **Fix it** points RetroArch at the synced folders, with sorting by core or folder
+  off as EmuDeck sets it, and copies RetroArch's own saves and states across: the newer of two copies
+  wins, the other goes to the safety folder. `retroarch.cfg` is backed up next to itself first.
 - Replaced, moved-away and deleted files go to `<backup folder>/_retroarch_safety/` (newest 20
   changes kept); every copy is read back before it's put in place. Close RetroArch first.
 

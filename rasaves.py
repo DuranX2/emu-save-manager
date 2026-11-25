@@ -297,6 +297,69 @@ def choose_settings(saves=None, states=None, extra_dirs=(), cfg_path=None) -> Se
     return s
 
 
+def _set_cfg_values(raw: bytes, values: dict) -> bytes:
+    """retroarch.cfg with some keys set (added when missing); line endings kept."""
+    nl = b"\r\n" if b"\r\n" in raw else b"\n"
+    lines = raw.split(nl)
+    seen = set()
+    for i, line in enumerate(lines):
+        m = re.match(rb"^\s*([A-Za-z0-9_]+)\s*=", line)
+        if m and m.group(1).decode() in values:
+            k = m.group(1).decode()
+            seen.add(k)
+            lines[i] = f'{k} = "{values[k]}"'.encode("utf-8")
+    tail = 1 if lines and lines[-1] == b"" else 0
+    for k, v in values.items():
+        if k not in seen:
+            lines.insert(len(lines) - tail, f'{k} = "{v}"'.encode("utf-8"))
+    return nl.join(lines)
+
+
+def fix_folders(s: Settings, backup_dir) -> Report:
+    """When RetroArch (s.other_cfg) keeps its saves somewhere other than the app's folders:
+    point it at the app's folders, with per-core and per-folder sorting off (EmuDeck's layout),
+    and copy its own saves and states there. When a file is in both places the newer one is kept
+    and the other goes to the safety folder. retroarch.cfg is backed up next to itself first;
+    RetroArch's old folders are left as they are."""
+    rep = Report()
+    if not s.other_cfg or not s.saves_dir:
+        rep.refused.append(("RetroArch", "nothing to fix"))
+        return rep
+    cfg = Path(s.other_cfg)
+    old = load_settings(cfg)
+    safety = safecopy.Safety(backup_dir, SAFETY_NAME)
+    raw = cfg.read_bytes()
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    safecopy.write_file_verified(raw, cfg.with_name(f"{cfg.name}.esm-backup-{stamp}"))
+    pairs = [("saves", old.cfg_saves_dir, s.saves_dir), ("states", old.cfg_states_dir, s.states_dir)]
+    for area, src, dst in pairs:
+        if not src or not dst or same_dir(src, dst):
+            continue
+        for f in sorted(scan_area(src, area), key=lambda f: f.mtime):
+            dest = Path(dst) / f.name                        # sorting off: straight into the folder
+            try:
+                if dest.exists():
+                    if dest.read_bytes() == f.path.read_bytes():
+                        continue
+                    if dest.stat().st_mtime >= f.mtime:
+                        rep.skipped.append(f)                # the one here is newer: keep it
+                        continue
+                safecopy.copy_file_verified(f.path, dest, safety, "replaced by newer RetroArch saves")
+                rep.done.append(f)
+            except (OSError, safecopy.CopyError) as ex:
+                rep.refused.append((f.name, str(ex)))
+    values = {"savefile_directory": str(s.saves_dir), "sort_savefiles_enable": "false",
+              "sort_savefiles_by_content_enable": "false", "savefiles_in_content_dir": "false",
+              "sort_savestates_enable": "false", "sort_savestates_by_content_enable": "false",
+              "savestates_in_content_dir": "false"}
+    if s.states_dir:
+        values["savestate_directory"] = str(s.states_dir)
+    safecopy.write_file_verified(_set_cfg_values(raw, values), cfg, safety, "retroarch.cfg before the fix")
+    rep.safety_dir = safety.dir
+    safety.prune()
+    return rep
+
+
 # ---------------------------------------------------------------------------
 # Playlists and ROMs
 # ---------------------------------------------------------------------------

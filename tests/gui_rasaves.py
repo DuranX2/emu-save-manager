@@ -309,6 +309,39 @@ v.act("menu"); pick("open"); assert app.opened
 d.destroy(); pump(0.2)
 print("9. long menus scroll; where saves are kept; the box art switch; open folder: ok")
 
+# RetroArch keeping its saves somewhere else than the folders the app syncs
+synced = T / "synced"
+put(synced / "saves" / "Metroid Fusion (USA).srm", b"old synced", age=9999); (synced / "states").mkdir(parents=True)
+own = T / "home/.config/retroarch"
+put(own / "saves" / "mGBA" / "Metroid Fusion (USA).srm", b"newer, RetroArch's own")
+put(own / "saves" / "mGBA" / "Golden Sun (USA).srm", b"only here"); (own / "states").mkdir(parents=True)
+(own / "retroarch.cfg").write_text('savefile_directory = ":/saves"\nsavestate_directory = ":/states"\n'
+                                   'sort_savefiles_enable = "true"\n')
+
+
+class App2(FakeApp):
+    cfg = {"ra_rom_dirs": [str(roms)]}
+    def resolve(self, emu):
+        return {"RetroArch": {"Saves": synced / "saves", "States": synced / "states"}}.get(emu, {})
+
+
+app.destroy()
+app = App2(); app.geometry("10x10+0+0")
+d = Dialog(app); v = d.view
+assert pump(4, lambda: v.running and v.items[0])
+assert v.items[0][0].kind == "notice" and v.items[0][v.cursor[0]].kind == "notice", [it.title for it in v.items[0]]
+shot("ra_notice")
+answers.clear()
+auto_answer("fix", "isn't using these saves"); auto_answer("ok", "Close RetroArch")
+v.act("ok"); pump(0.8)
+assert answers == ["RetroArch isn't using these saves", "Close RetroArch first"], answers
+assert R.read_cfg(own / "retroarch.cfg")["savefile_directory"] == str(synced / "saves")
+assert (synced / "saves" / "Metroid Fusion (USA).srm").read_bytes() == b"newer, RetroArch's own"
+assert (synced / "saves" / "Golden Sun (USA).srm").read_bytes() == b"only here"
+assert v.items[0] and v.items[0][0].kind != "notice", "the notice is gone once fixed"
+d.destroy(); pump(0.2)
+print("11. RetroArch saving elsewhere: a notice first on the systems screen, and Fix it moves RetroArch over: ok")
+
 import emu_save_manager as esm
 esm.App.open_folder = lambda self, p: None
 main = esm.App()

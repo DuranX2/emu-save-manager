@@ -271,4 +271,26 @@ check(s3.cfg_path == old / "retroarch.cfg" and s3.sort_saves_core, "a settings f
 s4 = R.choose_settings(None, None, [old])
 check(R.same_dir(s4.saves_dir, old / "saves"), "with no folders of its own, the settings file's are used")
 
+# ---- fixing it: point that RetroArch at the app's folders and bring its saves along ----
+put(old / "saves" / "VBA Next" / "Game 1.srm", b"newer on this PC")             # newer than the synced one
+os.utime(real / "saves" / "Game 1.srm", (time.time() - 9999, time.time() - 9999))
+put(old / "saves" / "VBA Next" / "Game 2.srm", b"older on this PC", age=99999)  # older: the synced one stays
+put(old / "states" / "Old GBA Game.state1", b"st")
+put(old / "states" / "Old GBA Game.state1.png", F.tiny_png())
+raw_before = (old / "retroarch.cfg").read_bytes()
+rep = R.fix_folders(s2, T / "pcbackups")
+cfg_now = R.read_cfg(old / "retroarch.cfg")
+check(cfg_now["savefile_directory"] == str(real / "saves") and cfg_now["savestate_directory"] == str(real / "states"),
+      "RetroArch points at the synced folders")
+check(cfg_now["sort_savefiles_enable"] == "false" and cfg_now["sort_savestates_enable"] == "false", "sorting off")
+check(any(p.read_bytes() == raw_before for p in old.glob("retroarch.cfg.esm-backup-*")), "settings backed up next to it")
+check((real / "saves" / "Game 1.srm").read_bytes() == b"newer on this PC", "the newer save wins")
+check(any(p.read_bytes() == b"x" for p in (T / "pcbackups" / R.SAFETY_NAME).rglob("Game 1.srm")), "the older one is kept")
+check((real / "saves" / "Game 2.srm").read_bytes() == b"x", "an older PC save doesn't replace a newer synced one")
+check((real / "saves" / "Old GBA Game.srm").read_bytes() == b"o" and (real / "states" / "Old GBA Game.state1").exists(),
+      "saves and states only on this PC are copied in")
+check((old / "saves" / "VBA Next" / "Game 1.srm").exists(), "RetroArch's old folders are left as they were")
+s5 = R.choose_settings(real / "saves", real / "states", [old])
+check(s5.cfg_path == old / "retroarch.cfg" and not s5.other_cfg, "afterwards the settings file matches")
+
 print(f"test_rasaves: {ok} checks passed")

@@ -215,6 +215,19 @@ class SystemItem:
         return "system|" + self.system
 
 
+class NoticeTile:
+    """First on the systems screen when RetroArch keeps its saves somewhere other than these folders."""
+    kind = "notice"
+    name = "notice"
+    title = "RetroArch isn't using these saves"
+    system = stem = db_name = ""
+    orphan = scattered = False
+    art_key = "system|notice"
+
+    def __init__(self, settings):
+        self.settings = settings
+
+
 class BackupsTile:
     kind = "backups"
     name = "backups"
@@ -356,6 +369,8 @@ class RAConsoleView(ConsoleBase):
                      if self.by_system.get(k)]
             if tiles or self.backups:
                 tiles.append(BackupsTile(self.backups))
+            if self.lib and self.lib.settings.other_cfg:
+                tiles.insert(0, NoticeTile(self.lib.settings))
             self.items[0] = tiles
             self.side = 0
         elif self.mode == "games":
@@ -495,7 +510,7 @@ class RAConsoleView(ConsoleBase):
         return im.resize((max(1, round(im.width * k)), max(1, round(im.height * k))), Image.LANCZOS)
 
     def tile_image(self, it):
-        if it.kind in ("system", "backups"):
+        if it.kind in ("system", "backups", "notice"):
             key = ("home", it.art_key, len(getattr(it, "games", None) or getattr(it, "backups", [])))
             if key not in self.photos:
                 try:
@@ -620,11 +635,18 @@ class RAConsoleView(ConsoleBase):
         pass
 
     def _home_tile(self, it, w, h):
+        if it.kind == "notice":
+            return _badge(_system_card("notice", w, h, "Fix saves", "press A"), "!")
         if it.kind == "backups":
             n = len(it.backups)
             return _system_card("backups", w, h, "Backups", f"{n} saved" if n else "none yet")
         n = len(it.games)
         return _system_card(it.system, w, h, short_name(it.system), f"{n} game{'s' if n != 1 else ''}")
+
+    def _notice_text(self, s):
+        dirs = ", ".join(str(d) for d in s.other_dirs) or "another folder"
+        return (f"RetroArch's settings ({s.other_cfg}) keep its saves in {dirs}, so RetroArch doesn't see the "
+                f"saves here ({s.saves_dir}) - the ones you sync - and what you save in RetroArch isn't synced.")
 
     def _draw_home_info(self, it, box):
         c = self.canvas
@@ -648,7 +670,14 @@ class RAConsoleView(ConsoleBase):
         y = y0 + pad
         c.create_text(tx, y, text=it.title, fill="#ffffff", font=self.f_title, anchor="nw", width=tw, tags="ui")
         y += self.f_title.metrics("linespace") * (2 if self.f_title.measure(it.title) > tw else 1) + 4
-        if it.kind == "system":
+        if it.kind == "notice":
+            y = max(y, y0 + pad + size + 16)
+            for para, fill in ((self._notice_text(it.settings), "#e6e9f8"),
+                               ("Ⓐ Fix it: point RetroArch at these folders and bring its own saves here.", MARK)):
+                t = c.create_text(x0 + pad, y, text=para, fill=fill, font=self.f_body, anchor="nw",
+                                  width=x1 - x0 - 2 * pad, tags="ui")
+                y = c.bbox(t)[3] + 12
+        elif it.kind == "system":
             games = it.games
             n_states = sum(len(g.game.states) for g in games)
             rows = [f"{len(games)} game{'s' if len(games) != 1 else ''} · "
@@ -679,11 +708,12 @@ class RAConsoleView(ConsoleBase):
             y = self.text_rows(x0 + pad, y, [
                 "Every game's backups, all systems together. A game's own backups are also in its Ⓐ menu."],
                 x1 - x0 - 2 * pad, fill="#c9d0f0")
-        c.create_text((x0 + x1) // 2, y1 - pad - 6, text="Ⓐ Open", fill=ACCENT_TXT, font=self.f_body,
+        c.create_text((x0 + x1) // 2, y1 - pad - 6, text="Ⓐ Fix it" if it.kind == "notice" else "Ⓐ Open",
+                      fill=ACCENT_TXT, font=self.f_body,
                       anchor="s", tags="ui")
 
     def draw_info(self, it, box):
-        if it.kind in ("system", "backups"):
+        if it.kind in ("system", "backups", "notice"):
             self._draw_home_info(it, box)
             return
         c = self.canvas
@@ -761,6 +791,30 @@ class RAConsoleView(ConsoleBase):
                           fill="#c9d0f0", font=self.f_small, anchor="n", tags="ui")
 
     # ---- shared helpers ----------------------------------------------------------
+    def fix_folders(self):
+        s = self.lib.settings if self.lib else None
+        if not s or not s.other_cfg:
+            return
+        msg = (self._notice_text(s) + "\n\nFix it: RetroArch's settings are changed to use these folders, with "
+               "sorting by core or folder turned off (the layout EmuDeck uses), and RetroArch's own saves and states "
+               "are copied here. When a save is in both places the newer one is kept; the other goes to the "
+               "_retroarch_safety folder. RetroArch's settings file is backed up next to itself first, and its old "
+               "folders are left as they are.")
+        if self.prompts.choose("RetroArch isn't using these saves", msg,
+                               [("fix", "Fix it"), ("cancel", "Not now")]) != "fix":
+            return
+        if not self._close_retroarch():
+            return
+        try:
+            rep = R.fix_folders(s, self.dialog.backup_dir)
+        except Exception as ex:  # noqa - OSError, CopyError
+            self.prompts.showerror("Couldn't finish", str(ex))
+            self.reload()
+            return
+        self._report(rep, "Fixed: RetroArch uses these folders now. Copied", "save")
+        if not rep.done and not rep.refused:
+            self.toast("Fixed: RetroArch uses these folders now")
+
     def _close_retroarch(self):
         if self.warned:
             return True
@@ -796,6 +850,9 @@ class RAConsoleView(ConsoleBase):
             return
         if it.kind == "backups":
             self.open_backups()
+            return
+        if it.kind == "notice":
+            self.fix_folders()
             return
         if it.kind == "backup":
             what = f"{len(sel)} backups" if len(sel) > 1 else f"{it.title} — {self.tile_title(it)}"
@@ -935,7 +992,7 @@ class RAConsoleView(ConsoleBase):
 
     def details(self):
         it = self.current()
-        if it is None or it.kind in ("system", "backups"):
+        if it is None or it.kind in ("system", "backups", "notice"):
             return
         if it.kind == "game":
             g = it.game
