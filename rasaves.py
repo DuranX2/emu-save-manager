@@ -152,16 +152,41 @@ def config_candidates(extra_dirs=()):
         home / ".var/app/org.libretro.RetroArch/config/retroarch", home / ".config/retroarch",
         home / "snap/retroarch/current/.config/retroarch", home / "Library/Application Support/RetroArch",
         appdata / "EmuDeck/Emulators/RetroArch", appdata / "RetroArch",
+        Path(os.environ.get("ProgramFiles(x86)", "C:/Program Files (x86)")) / "Steam/steamapps/common/RetroArch",
         Path("C:/RetroArch-Win64"), Path("C:/RetroArch"),
     ]
     return [Path(d) / "retroarch.cfg" for d in dirs]
 
 
 def find_config(extra_dirs=()):
+    found = find_configs(extra_dirs)
+    return found[0] if found else None
+
+
+def find_configs(extra_dirs=()):
+    """Every retroarch.cfg on this computer, in the order they're looked for (no duplicates)."""
+    out, seen = [], set()
     for c in config_candidates(extra_dirs):
-        if c.is_file():
-            return c
-    return None
+        try:
+            if not c.is_file():
+                continue
+            k = os.path.normcase(os.path.realpath(c))
+        except OSError:
+            continue
+        if k not in seen:
+            seen.add(k)
+            out.append(c)
+    return out
+
+
+def same_dir(a, b) -> bool:
+    """The same folder, following links and junctions (EmuDeck links RetroArch's saves folder)."""
+    if not a or not b:
+        return False
+    try:
+        return os.path.normcase(os.path.realpath(a)) == os.path.normcase(os.path.realpath(b))
+    except OSError:
+        return False
 
 
 @dataclass
@@ -177,6 +202,10 @@ class Settings:
     playlists_dir: Path | None = None
     thumbs_dir: Path | None = None
     cfg_path: Path | None = None
+    cfg_saves_dir: Path | None = None        # what the settings file itself says (or implies)
+    cfg_states_dir: Path | None = None
+    other_cfg: Path | None = None            # a settings file found that uses other folders
+    other_dirs: tuple = ()                   # …and those folders (not shown or changed)
 
     def area_dir(self, area):
         return self.saves_dir if area == "saves" else self.states_dir
@@ -226,6 +255,8 @@ def load_settings(cfg_path=None, saves_fallback=None, states_fallback=None) -> S
         p = _cfg_path_value(cfg.get(k, ""), base) if base else None
         return p if p is not None and p.is_dir() else None
 
+    s.cfg_saves_dir = path("savefile_directory") or (base / "saves" if base and (base / "saves").is_dir() else None)
+    s.cfg_states_dir = path("savestate_directory") or (base / "states" if base and (base / "states").is_dir() else None)
     s.saves_dir = path("savefile_directory") or (Path(saves_fallback) if saves_fallback else None) \
         or (base / "saves" if base and (base / "saves").is_dir() else None)
     s.states_dir = path("savestate_directory") or (Path(states_fallback) if states_fallback else None) \
@@ -235,6 +266,34 @@ def load_settings(cfg_path=None, saves_fallback=None, states_fallback=None) -> S
     s.saves_in_content, s.states_in_content = on("savefiles_in_content_dir"), on("savestates_in_content_dir")
     s.playlists_dir = path("playlist_directory") or (base / "playlists" if base and (base / "playlists").is_dir() else None)
     s.thumbs_dir = path("thumbnails_directory") or (base / "thumbnails" if base and (base / "thumbnails").is_dir() else None)
+    return s
+
+
+def choose_settings(saves=None, states=None, extra_dirs=(), cfg_path=None) -> Settings:
+    """Settings for the saves and states folders the app itself uses (the main window's).
+
+    The retroarch.cfg whose folders are those folders is used for the sorting settings, playlists
+    and thumbnails. If no settings file uses them (another RetroArch install, say), the app's folders
+    are still used, with RetroArch's default sorting, and the other file is reported, never touched."""
+    if cfg_path:                                          # chosen by hand
+        return load_settings(cfg_path, saves, states)
+    app_saves = Path(saves) if saves and Path(saves).is_dir() else None
+    app_states = Path(states) if states and Path(states).is_dir() else None
+    cands = find_configs(extra_dirs)
+    if app_saves is None and app_states is None:
+        return load_settings(cands[0] if cands else None)
+    for c in cands:
+        s = load_settings(c, app_saves, app_states)
+        if same_dir(s.cfg_saves_dir, app_saves) or same_dir(s.cfg_states_dir, app_states):
+            s.saves_dir = app_saves or s.saves_dir
+            s.states_dir = app_states or s.states_dir
+            return s
+    s = load_settings(None, app_saves, app_states)
+    if cands:
+        other = load_settings(cands[0])
+        s.other_cfg = cands[0]
+        s.other_dirs = tuple(d for d in (other.cfg_saves_dir, other.cfg_states_dir) if d)
+        s.playlists_dir, s.thumbs_dir = other.playlists_dir, other.thumbs_dir      # read only: names, art
     return s
 
 

@@ -240,4 +240,35 @@ try:
 except C.ConvertError:
     check(True, "wrong size refused")
 
+# ---- which settings file: the one for the folders the app uses (a PC with two RetroArch installs) ----
+real = T / "pc/Emulation/saves/retroarch"
+for d in (real / "saves", real / "states"):
+    d.mkdir(parents=True, exist_ok=True)
+for n in range(5):
+    put(real / "saves" / f"Game {n}.srm", b"x")
+old = T / "pc/RetroArch-Win64"                                     # an older install, found first
+put(old / "saves" / "Old GBA Game.srm", b"o"); (old / "states").mkdir()
+(old / "retroarch.cfg").write_text('savefile_directory = ":\\saves"\nsort_savefiles_enable = "true"\n')
+emu = T / "pc/AppData/EmuDeck/Emulators/RetroArch"                 # EmuDeck's: its saves folder is a link
+emu.mkdir(parents=True)
+(emu / "saves").symlink_to(real / "saves", target_is_directory=True)
+(emu / "states").symlink_to(real / "states", target_is_directory=True)
+(emu / "retroarch.cfg").write_text('savefile_directory = "default"\nsort_savestates_enable = "true"\n')
+s1 = R.choose_settings(real / "saves", real / "states", [old, emu])
+check(s1.cfg_path == emu / "retroarch.cfg" and s1.sort_states_core and not s1.other_cfg,
+      f"the settings file whose (linked) folders match is used {s1.cfg_path}")
+check(R.same_dir(s1.saves_dir, real / "saves"), "the app's saves folder")
+(emu / "retroarch.cfg").unlink()
+s2 = R.choose_settings(real / "saves", real / "states", [old])
+check(R.same_dir(s2.saves_dir, real / "saves") and not s2.sort_saves_core, "no match: the app's folders, default sorting")
+check(s2.other_cfg == old / "retroarch.cfg" and any(R.same_dir(d, old / "saves") for d in s2.other_dirs),
+      "the other install is reported")
+lib_pc = R.scan(s2, [])
+check(len(lib_pc.games) == 5 and not any("Old GBA" in g.stem for g in lib_pc.games),
+      "the main window's saves are shown, the other install's aren't")
+s3 = R.choose_settings(real / "saves", real / "states", [old], cfg_path=old / "retroarch.cfg")
+check(s3.cfg_path == old / "retroarch.cfg" and s3.sort_saves_core, "a settings file chosen by hand is used as is")
+s4 = R.choose_settings(None, None, [old])
+check(R.same_dir(s4.saves_dir, old / "saves"), "with no folders of its own, the settings file's are used")
+
 print(f"test_rasaves: {ok} checks passed")

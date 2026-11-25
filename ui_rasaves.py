@@ -902,6 +902,9 @@ class RAConsoleView(ConsoleBase):
                  f"States: {s.states_dir or 'not found'}",
                  f"    {sort(s.sort_states_core, s.sort_states_content, s.states_in_content)}",
                  f"Playlists: {s.playlists_dir or 'not found'}",
+                 *([f"Note: {s.other_cfg} uses other folders ({', '.join(str(d) for d in s.other_dirs)}). "
+                    "This manager uses the folders the main window shows and leaves those alone."]
+                   if s.other_cfg else []),
                  "Game folders: " + (", ".join(str(d) for d in self.lib.roms.dirs) if self.lib and self.lib.roms.dirs
                                      else "none found")]
         self.show_overlay("Where RetroArch keeps saves", "\n".join(lines), [("ok", "Close")], lambda k: None)
@@ -1298,8 +1301,8 @@ class RASaveDialog(tk.Toplevel):
     def settings(self) -> R.Settings:
         res = self._resolved()
         saves, states = res.get("Saves"), res.get("States")
-        cfg_path = self.cfg.get("ra_cfg") or R.find_config([Path(p).parent for p in (saves, states) if p])
-        return R.load_settings(cfg_path, saves, states)
+        extra = [Path(p).parent for p in (saves, states) if p]
+        return R.choose_settings(saves, states, extra, self.cfg.get("ra_cfg"))
 
     def custom_rom_dirs(self):
         return list(self.cfg.get("ra_rom_dirs", []))
