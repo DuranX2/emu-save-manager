@@ -124,6 +124,27 @@ class ConsoleBase(tk.Frame):
     def footer(self):
         return [("A", "Options"), ("X", "Mark"), ("Y", "Menu"), ("B", "Back"), ("LB/RB", "Slot")]
 
+    EDGE_SWITCH = True            # moving left/right off the grid's edge switches slot
+
+    def tab_items(self):
+        """[(label, active)] for the tabs across the top (default: the two slots)."""
+        return [(self.tab_label(0), self.side == 0), (self.tab_label(1), self.side == 1)]
+
+    def on_tab(self, i):
+        """A tab was clicked."""
+        if i == self.side:
+            self.card_menu(i)
+        else:
+            self.switch(i)
+
+    def on_prev_next(self, step):
+        """LB / RB (step -1 / +1)."""
+        self.switch(0 if step < 0 else 1)
+
+    def on_back(self):
+        """B with nothing marked."""
+        self.main_menu()
+
     def on_stop(self):
         pass
 
@@ -183,12 +204,14 @@ class ConsoleBase(tk.Frame):
         if action in ("left", "right", "up", "down") and items:
             if action == "left":
                 if c % cols == 0:
-                    self.switch(0)
+                    if self.EDGE_SWITCH:
+                        self.switch(0)
                     return
                 c -= 1
             elif action == "right":
                 if c % cols == cols - 1 or c == len(items) - 1:
-                    self.switch(1)
+                    if self.EDGE_SWITCH:
+                        self.switch(1)
                     return
                 c += 1
             elif action == "up":
@@ -201,9 +224,10 @@ class ConsoleBase(tk.Frame):
                     c = len(items) - 1
             self.move(c)
         elif action in ("left", "right"):
-            self.switch(0 if action == "left" else 1)
+            if self.EDGE_SWITCH:
+                self.switch(0 if action == "left" else 1)
         elif action in ("prev", "next"):
-            self.switch(0 if action == "prev" else 1)
+            self.on_prev_next(-1 if action == "prev" else 1)
         elif action == "mark" and items:
             self.marks[self.side] ^= {self.mark_key(items[c])}
             self.redraw()
@@ -219,7 +243,7 @@ class ConsoleBase(tk.Frame):
                 self.marks[self.side].clear()
                 self.redraw()
             else:
-                self.main_menu()
+                self.on_back()
         elif action == "view":
             self.on_view()
 
@@ -262,12 +286,9 @@ class ConsoleBase(tk.Frame):
         if self.overlay is not None:
             self.overlay.click(e.x, e.y)
             return
-        for side, (x0, y0, x1, y1) in enumerate(self._tab_boxes()):
+        for i, (x0, y0, x1, y1) in self._tab_boxes():
             if x0 <= e.x <= x1 and y0 <= e.y <= y1:
-                if side == self.side:
-                    self.card_menu(side)
-                else:
-                    self.switch(side)
+                self.on_tab(i)
                 return
         idx = self._tile_at(e.x, e.y)
         if idx is not None:
@@ -304,13 +325,34 @@ class ConsoleBase(tk.Frame):
         return None
 
     def _tab_boxes(self):
+        """[(tab index, box)] for the tabs that fit; the active tab is always shown."""
         w, h, head, foot, split = self.geom()
-        x = 50 + self.f_head.measure(self.HEADING) + self.f_small.measure(self.SUBHEADING) + 30
+        x_start = 50 + self.f_head.measure(self.HEADING) + self.f_small.measure(self.SUBHEADING) + 30
+        x_end = w - 24 - self.f_small.measure(self.space_text(self.side)) - 30
+        tabs = self.tab_items()
+        widths = [self.f_tab.measure(label) + 30 for label, _on in tabs]
+        active = next((i for i, (_l, on) in enumerate(tabs) if on), 0)
+        lo = hi = active
+        room = x_end - x_start - 40                          # leave room for the ‹ › hints
+        used = widths[active] if tabs else 0
+        while True:                                          # grow around the active tab
+            grew = False
+            if hi + 1 < len(tabs) and used + widths[hi + 1] + 12 <= room:
+                hi += 1
+                used += widths[hi] + 12
+                grew = True
+            if lo - 1 >= 0 and used + widths[lo - 1] + 12 <= room:
+                lo -= 1
+                used += widths[lo] + 12
+                grew = True
+            if not grew:
+                break
+        self._tab_more = (lo > 0, hi < len(tabs) - 1)
+        x = x_start + (20 if lo > 0 else 0)
         boxes = []
-        for side in (0, 1):
-            tw = self.f_tab.measure(self.tab_label(side)) + 30
-            boxes.append((x, 14, x + tw, head - 10))
-            x += tw + 12
+        for i in range(lo, hi + 1) if tabs else ():
+            boxes.append((i, (x, 14, x + widths[i], head - 10)))
+            x += widths[i] + 12
         return boxes
 
     def _keep_visible(self):
@@ -442,12 +484,18 @@ class ConsoleBase(tk.Frame):
         if self.SUBHEADING:
             c.create_text(24 + self.f_head.measure(self.HEADING) + 8, head // 2 + 4, text=self.SUBHEADING,
                           fill=DIM, font=self.f_small, anchor="w", tags="ui")
-        for side, (x0, y0, x1, y1) in enumerate(self._tab_boxes()):
-            on = side == self.side
-            c.create_text((x0 + x1) / 2, (y0 + y1) / 2 - 2, text=self.tab_label(side),
+        tabs = self.tab_items()
+        boxes = self._tab_boxes()
+        for i, (x0, y0, x1, y1) in boxes:
+            label, on = tabs[i]
+            c.create_text((x0 + x1) / 2, (y0 + y1) / 2 - 2, text=label,
                           fill=TEXT if on else DIM, font=self.f_tab, tags="ui")
             if on:
                 c.create_line(x0 + 8, y1, x1 - 8, y1, fill=ACCENT, width=3, tags="ui")
+        if boxes and self._tab_more[0]:
+            c.create_text(boxes[0][1][0] - 14, head // 2 - 2, text="‹", fill=DIM, font=self.f_tab, tags="ui")
+        if boxes and self._tab_more[1]:
+            c.create_text(boxes[-1][1][2] + 12, head // 2 - 2, text="›", fill=DIM, font=self.f_tab, tags="ui")
         c.create_text(w - 24, head // 2, text=self.space_text(self.side), fill=DIM, font=self.f_small,
                       anchor="e", tags="ui")
         c.create_line(24, head, w - 24, head, fill="#2a3360", tags="ui")

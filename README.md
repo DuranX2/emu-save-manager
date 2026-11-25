@@ -231,15 +231,20 @@ picture fills the panel behind its game title, save title, detail lines, size, r
 
 ## RetroArch Save Manager
 **Memory Cards → RetroArch Save Manager…** shows every game that has RetroArch saves, with its box
-art, in the same controller-friendly style as the console managers. **Backups**
-(`<backup folder>/RetroArch saves/<system>/<game>/<date>/`) is the second slot.
+art, in the same controller-friendly style as the console managers.
+- It opens on a **systems screen**: one card per system with its number of games, plus **Other
+  games** (no system known) and **Backups**. **A** opens a system.
+- Inside a system, every system is a **tab across the top**: **LB / RB** move to the previous / next
+  system (each remembers where you were), **B** or **View** goes back to the systems screen.
+- **Backups** (`<backup folder>/RetroArch saves/<system>/<game>/<date>/`) has its own card on the
+  systems screen, and each game's own backups are in its **A** menu (**Restore a backup…**).
 - Saves are matched to game files by name (RetroArch names saves after the game file) to know each
   game's system, core and box art. Game files are found in RetroArch's playlists, EmuDeck's `roms`
   folder, the ROM Library's local folder, and folders added with **Y ▸ Game folders…**.
 - Box art comes from RetroArch's own thumbnails and ES-DE's downloads, and (unless turned off in the
   **Y** menu) from the libretro thumbnails server, cached in `~/.emu_save_manager/ra_art/`.
 - The panel shows the in-game save, the save states (slot numbers and dates) and the states'
-  screenshots, cycling. **View** (Select / F2) filters by system.
+  screenshots, cycling.
 - **A** options: **back up** a game (save, states and screenshots, dated; keep as many as you like),
   **restore** one, delete, and per system:
   - PlayStation: copy the memory card to DuckStation (offering the name DuckStation uses for the
@@ -248,7 +253,8 @@ art, in the same controller-friendly style as the console managers. **Backups**
     off), or import one.
   - Nintendo 64: split Mupen64Plus-Next's combined save into `.eep/.mpk/.sra/.fla` (Mupen64Plus /
     RMG byte order, or Project64's), or combine those files back.
-- **Find saves with no game file** (marked **?**): saves left behind when a game file was renamed,
+- **Find saves with no game file** (marked **?**; in the **Y** menu, for the system you're in, or all
+  systems from the systems screen): saves left behind when a game file was renamed,
   with the closest game files offered to rename them to.
 - **Tidy scattered saves** (marked **↔**): files left where RetroArch no longer looks after its
   "sort by core / content folder" or "next to content" settings changed are moved to where it looks

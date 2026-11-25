@@ -31,7 +31,7 @@ from tkinter import filedialog
 import raconvert as C
 import rasaves as R
 import romlibrary as L
-from ui_console import ConsoleBase, Image, MARK
+from ui_console import ACCENT as ACCENT_TXT, ConsoleBase, Image, MARK
 
 try:
     from PIL import ImageDraw, ImageFont
@@ -178,9 +178,58 @@ class BackupItem:
         return f"{self.system}|{self.stem.lower()}"
 
 
-def _system_card(system: str, w: int, h: int):
-    """An original placeholder 'box' for a game without art: a coloured card with the system's name."""
-    name = L.SYSTEMS.get(system, "?") if system else "?"
+SHORT = {"gb": "Game Boy", "gbc": "GB Color", "gba": "GBA", "nds": "DS", "n64": "N64", "nes": "NES", "snes": "SNES",
+         "psx": "PS1", "ps2": "PS2", "psp": "PSP", "genesis": "Genesis", "mastersystem": "Master System",
+         "gamegear": "Game Gear", "pcengine": "PC Engine", "segacd": "Sega CD", "megacd": "Mega-CD", "sega32x": "32X",
+         "saturn": "Saturn", "dreamcast": "Dreamcast", "atari2600": "2600", "atari5200": "5200", "atari7800": "7800",
+         "atarilynx": "Lynx", "atarijaguar": "Jaguar", "ngp": "NGP", "ngpc": "NGP Color", "wonderswan": "WonderSwan",
+         "wonderswancolor": "WS Color", "virtualboy": "Virtual Boy", "n3ds": "3DS", "gc": "GameCube", "wii": "Wii",
+         "arcade": "Arcade", "fbneo": "FBNeo", "mame": "MAME", "neogeo": "Neo Geo", "": "Other"}
+
+
+def short_name(system):
+    return SHORT.get(system) or L.SYSTEMS.get(system, system)
+
+
+def system_title(system):
+    return L.SYSTEMS.get(system, system) if system else "Other games"
+
+
+class SystemItem:
+    """A system on the first screen: opens that system's games."""
+    kind = "system"
+
+    def __init__(self, system, games, n_backups):
+        self.system = system
+        self.name = "sys:" + system
+        self.title = system_title(system)
+        self.games = games                        # [GameItem]
+        self.n_backups = n_backups
+        self.stem, self.db_name = "", ""
+        self.orphan = self.scattered = False
+        self.n_orphans = sum(1 for g in games if g.orphan)
+        self.n_scattered = sum(1 for g in games if g.scattered)
+
+    @property
+    def art_key(self):
+        return "system|" + self.system
+
+
+class BackupsTile:
+    kind = "backups"
+    name = "backups"
+    title = "Backups"
+    system = stem = db_name = ""
+    orphan = scattered = False
+    art_key = "system|backups"
+
+    def __init__(self, backups):
+        self.backups = backups
+
+
+def _system_card(system: str, w: int, h: int, label=None, sub=None):
+    """An original placeholder 'box': a coloured card with the system's name (and a line under it)."""
+    name = label or (L.SYSTEMS.get(system, "?") if system else "?")
     hue = int(hashlib.md5((system or "?").encode()).hexdigest()[:2], 16)
     import colorsys
     r, g, b = (int(v * 255) for v in colorsys.hsv_to_rgb(hue / 255, 0.45, 0.55))
@@ -188,28 +237,41 @@ def _system_card(system: str, w: int, h: int):
     d = ImageDraw.Draw(im)
     d.rounded_rectangle((4, 2, w - 5, h - 3), radius=8, fill=(r, g, b, 255), outline=(230, 235, 255, 200), width=2)
     d.rounded_rectangle((10, 8, w - 11, h - 9), radius=5, outline=(255, 255, 255, 60), width=1)
-    font = None
-    for f in ("DejaVuSans-Bold.ttf", "arialbd.ttf", "NotoSans-Bold.ttf"):
-        try:
-            font = ImageFont.truetype(f, 12)
+    def load(size):
+        for f in ("DejaVuSans-Bold.ttf", "arialbd.ttf", "NotoSans-Bold.ttf"):
+            try:
+                return ImageFont.truetype(f, size)
+            except Exception:  # noqa
+                continue
+        return ImageFont.load_default()
+    words = name.split()
+    for size in (max(12, w // 7), 12, 11, 10, 9):     # shrink until the longest word fits
+        font = load(size)
+        if all(d.textlength(wd, font=font) <= w - 16 for wd in words):
             break
-        except Exception:  # noqa
-            continue
-    font = font or ImageFont.load_default()
-    words, lines, cur = name.split(), [], ""
+    lines, cur = [], ""
     for wd in words:
         t = (cur + " " + wd).strip()
-        if d.textlength(t, font=font) > w - 18 and cur:
+        if d.textlength(t, font=font) > w - 16 and cur:
             lines.append(cur)
             cur = wd
         else:
             cur = t
     lines.append(cur)
-    y = h // 2 - 8 * len(lines)
+    y = h // 2 - 8 * len(lines) - (8 if sub else 0)
     for ln in lines[:4]:
         tw = d.textlength(ln, font=font)
         d.text(((w - tw) / 2, y), ln, fill=(255, 255, 255, 255), font=font)
         y += 16
+    if sub:
+        small = font
+        try:
+            small = ImageFont.truetype(getattr(font, "path", "DejaVuSans.ttf").replace("-Bold", ""), 11)
+        except Exception:  # noqa
+            pass
+        tw = d.textlength(sub, font=small)
+        d.rounded_rectangle(((w - tw) / 2 - 6, h - 26, (w + tw) / 2 + 6, h - 10), radius=7, fill=(0, 0, 0, 90))
+        d.text(((w - tw) / 2, h - 25), sub, fill=(235, 240, 255, 255), font=small)
     return im
 
 
@@ -239,13 +301,18 @@ class RAConsoleView(ConsoleBase):
     HEADING = "Saves"
     SUBHEADING = "RetroArch"
     TILE_ICON = ART_H
+    EDGE_SWITCH = False
 
     def __init__(self, master, dialog):
         super().__init__(master)
         self.dialog = dialog
         self.lib = None
         self.backups = []
-        self.filter = ""
+        self.mode = "systems"          # systems (the first screen) | games (one system) | backups
+        self.cur = None                # the system shown in games mode ('' = other games)
+        self.systems = []              # systems with saves or backups, in display order
+        self.by_system = {}            # system -> [GameItem]
+        self.pos = {}                  # where the cursor was, per screen
         self.warned = False
         self.art = {}                  # art key -> bytes | None (None: none found)
         self.loader = ArtLoader(dialog.download_art(), getattr(dialog, "http_get", None),
@@ -266,9 +333,119 @@ class RAConsoleView(ConsoleBase):
                 self.error[1] = ""
             except OSError as ex:
                 self.backups, self.error[1] = [], f"Can't read the backups: {ex}"
+        games = [GameItem(g, self.lib) for g in (self.lib.games if self.lib else [])]
+        self.by_system = {}
+        for it in games:
+            self.by_system.setdefault(it.system, []).append(it)
+        names = set(self.by_system) | {b.system for b in self.backups}
+        self.systems = sorted(names, key=lambda k: (k == "", system_title(k).lower()))
+        for it in games:
+            self._ask_art(it)
         self.slide = 0
         self.photos = {}
-        self._apply_filter()
+        self._build()
+
+    def _build(self):
+        if self.mode == "games" and self.cur not in self.by_system:
+            self.mode = "systems"
+        if self.mode == "systems":
+            n_b = {}
+            for b in self.backups:
+                n_b[b.system] = n_b.get(b.system, 0) + 1
+            tiles = [SystemItem(k, self.by_system.get(k, []), n_b.get(k, 0)) for k in self.systems
+                     if self.by_system.get(k)]
+            if tiles or self.backups:
+                tiles.append(BackupsTile(self.backups))
+            self.items[0] = tiles
+            self.side = 0
+        elif self.mode == "games":
+            self.items[0] = list(self.by_system.get(self.cur, []))
+            self.side = 0
+        else:
+            self.items[1] = [BackupItem(b) for b in self.backups]
+            for it in self.items[1]:
+                self._ask_art(it)
+            self.side = 1
+        self.clamp()
+        self.redraw(full=True)
+
+    # ---- moving between screens -------------------------------------------------------
+    def _screen(self):
+        return self.mode if self.mode != "games" else "games:" + str(self.cur)
+
+    def _remember(self):
+        self.pos[self._screen()] = (self.cursor[self.side], self.scroll[self.side])
+
+    def _restore_pos(self, default=0):
+        c, sc = self.pos.get(self._screen(), (default, 0))
+        self.cursor[self.side], self.scroll[self.side] = c, sc
+
+    def open_system(self, system):
+        self._remember()
+        self.mode, self.cur = "games", system
+        self.side = 0
+        self.marks[0].clear()
+        self._restore_pos()
+        self.on_cursor()
+        self._build()
+
+    def open_backups(self):
+        self._remember()
+        self.mode = "backups"
+        self.side = 1
+        self._restore_pos()
+        self.on_cursor()
+        self._build()
+
+    def go_home(self):
+        came_from = self.cur if self.mode == "games" else "backups"
+        self._remember()
+        self.mode = "systems"
+        self.side = 0
+        self.marks = [set(), set()]
+        self._build()
+        idx = next((i for i, it in enumerate(self.items[0])
+                    if (it.kind == "system" and it.system == came_from) or
+                    (it.kind == "backups" and came_from == "backups")), 0)
+        self.cursor[0] = idx
+        self.on_cursor()
+        self.redraw()
+
+    def act(self, action):
+        if self.overlay is None and self.mode == "systems" and action == "mark":
+            return
+        super().act(action)
+
+    def tab_items(self):
+        if self.mode == "games":
+            return [(short_name(k), k == self.cur) for k in self.systems if self.by_system.get(k)]
+        return [("Systems" if self.mode == "systems" else "Backups", True)]
+
+    def on_tab(self, i):
+        if self.mode == "games":
+            shown = [k for k in self.systems if self.by_system.get(k)]
+            if 0 <= i < len(shown) and shown[i] != self.cur:
+                self.open_system(shown[i])
+
+    def on_prev_next(self, step):
+        if self.mode != "games":
+            return
+        shown = [k for k in self.systems if self.by_system.get(k)]
+        if len(shown) > 1:
+            i = shown.index(self.cur) if self.cur in shown else 0
+            self.open_system(shown[(i + step) % len(shown)])
+
+    def on_back(self):
+        if self.mode == "systems":
+            self.main_menu()
+        else:
+            self.go_home()
+
+    def _scope(self):
+        """The games the menu's tools work on: this system's, or all of them on the first screen."""
+        if self.mode == "games":
+            return list(self.by_system.get(self.cur, []))
+        return [it for lst in self.by_system.values() for it in lst]
 
     def _ask_art(self, it):
         if it.art_key in self.art:
@@ -318,6 +495,14 @@ class RAConsoleView(ConsoleBase):
         return im.resize((max(1, round(im.width * k)), max(1, round(im.height * k))), Image.LANCZOS)
 
     def tile_image(self, it):
+        if it.kind in ("system", "backups"):
+            key = ("home", it.art_key, len(getattr(it, "games", None) or getattr(it, "backups", [])))
+            if key not in self.photos:
+                try:
+                    self.photos[key] = tk.PhotoImage(master=self.canvas, data=_png(self._home_tile(it, 80, ART_H)))
+                except Exception:  # noqa
+                    self.photos[key] = None
+            return self.photos[key]
         badge = "?" if it.orphan else ("↔" if it.scattered else "")
         key = ("tile", it.art_key, badge, bool(self.art.get(it.art_key)))
         if key not in self.photos:
@@ -387,20 +572,23 @@ class RAConsoleView(ConsoleBase):
         return "RetroArch" if side == 0 else "Backups"
 
     def space_text(self, side):
+        if self.mode == "systems":
+            n = sum(1 for it in self.items[0] if it.kind == "system")
+            total = sum(len(v) for v in self.by_system.values())
+            return f"{n} system{'s' if n != 1 else ''} · {total} game{'s' if total != 1 else ''}"
         items = self.items[side]
-        what = (L.SYSTEMS.get(self.filter, "Unknown system") + " · ") if self.filter else ""
-        if side == 0:
-            return f"{what}{len(items)} game{'s' if len(items) != 1 else ''}"
-        return f"{what}{len(items)} backup{'s' if len(items) != 1 else ''}"
+        if self.mode == "games":
+            return f"{system_title(self.cur)} · {len(items)} game{'s' if len(items) != 1 else ''}"
+        return f"{len(items)} backup{'s' if len(items) != 1 else ''}"
 
     def empty_text(self, side):
-        if side == 1:
-            return ("No backups yet.\nChoose a game in RetroArch and press Ⓐ ▸ Back up this game "
+        if self.mode == "backups":
+            return ("No backups yet.\nOpen a system, choose a game and press Ⓐ ▸ Back up this game "
                     "to keep a copy of its saves and states here.")
         if self.lib is None or (self.lib.settings.saves_dir is None and self.lib.settings.states_dir is None):
             return ("RetroArch's saves weren't found.\nSet its Saves and States folders with "
                     "'Locations…' in the main window.")
-        if self.filter:
+        if self.mode == "games":
             return "No saves for this system."
         return "No RetroArch saves yet."
 
@@ -418,15 +606,86 @@ class RAConsoleView(ConsoleBase):
         return f"{n} marked"
 
     def footer(self):
-        return [("A", "Options"), ("X", "Mark"), ("Y", "Menu"), ("B", "Back"), ("LB/RB", "Slot"), ("View", "System")]
+        if self.mode == "systems":
+            return [("A", "Open"), ("Y", "Menu")]
+        if self.mode == "games":
+            return [("A", "Options"), ("X", "Mark"), ("Y", "Menu"), ("B", "Systems"), ("LB/RB", "System")]
+        return [("A", "Options"), ("X", "Mark"), ("Y", "Menu"), ("B", "Systems")]
 
     def on_view(self):
-        self.system_menu()
+        if self.mode != "systems":
+            self.go_home()
 
     def card_menu(self, side):
-        self.system_menu()
+        pass
+
+    def _home_tile(self, it, w, h):
+        if it.kind == "backups":
+            n = len(it.backups)
+            return _system_card("backups", w, h, "Backups", f"{n} saved" if n else "none yet")
+        n = len(it.games)
+        return _system_card(it.system, w, h, short_name(it.system), f"{n} game{'s' if n != 1 else ''}")
+
+    def _draw_home_info(self, it, box):
+        c = self.canvas
+        x0, y0, x1, y1 = box
+        panel = self.panel_image(("ra",), [(34, 44, 92), (24, 30, 70), (16, 20, 48), (10, 12, 32)],
+                                 x1 - x0, y1 - y0)
+        if panel:
+            c.create_image(x0, y0, image=panel, anchor="nw", tags="ui")
+        pad = 16
+        size = min(BIG_ART, (x1 - x0) // 3)
+        key = ("homebig", it.art_key, size, len(getattr(it, "games", None) or getattr(it, "backups", [])))
+        if key not in self.photos:
+            try:
+                self.photos[key] = tk.PhotoImage(master=self.canvas, data=_png(self._home_tile(it, size * 3 // 4, size)))
+            except Exception:  # noqa
+                self.photos[key] = None
+        if self.photos[key]:
+            c.create_image(x0 + pad, y0 + pad, image=self.photos[key], anchor="nw", tags="ui")
+        tx = x0 + pad + size + 14
+        tw = x1 - tx - pad
+        y = y0 + pad
+        c.create_text(tx, y, text=it.title, fill="#ffffff", font=self.f_title, anchor="nw", width=tw, tags="ui")
+        y += self.f_title.metrics("linespace") * (2 if self.f_title.measure(it.title) > tw else 1) + 4
+        if it.kind == "system":
+            games = it.games
+            n_states = sum(len(g.game.states) for g in games)
+            rows = [f"{len(games)} game{'s' if len(games) != 1 else ''} · "
+                    f"{n_states} save state{'s' if n_states != 1 else ''}"]
+            if it.n_backups:
+                rows.append(f"{it.n_backups} backup{'s' if it.n_backups != 1 else ''}")
+            y = self.text_rows(tx, y, rows, tw, self.f_body, "#e6e9f8")
+            warn = []
+            if it.n_orphans:
+                warn.append(f"? {it.n_orphans} with no game file")
+            if it.n_scattered:
+                warn.append(f"↔ {it.n_scattered} with files out of place")
+            if warn:
+                y = self.text_rows(tx, y, warn, tw, fill=MARK)
+            y = max(y, y0 + pad + size + 16)
+            recent = sorted(games, key=lambda g: -(g.game.modified.timestamp() if g.game.modified else 0))[:8]
+            if recent:
+                y = self.text_rows(x0 + pad, y, ["Played most recently"], x1 - x0 - 2 * pad, self.f_body, "#ffffff")
+                y = self.text_rows(x0 + pad + 8, y, [
+                    f"{g.title}" + (f"  ·  {g.game.modified:%Y-%m-%d}" if g.game.modified else "") for g in recent],
+                    x1 - x0 - 2 * pad - 8, fill="#c9d0f0")
+        else:
+            bs = it.backups
+            rows = [f"{len(bs)} backup{'s' if len(bs) != 1 else ''} of {len({b.key for b in bs})} "
+                    f"game{'s' if len({b.key for b in bs}) != 1 else ''}"] if bs else ["No backups yet"]
+            y = self.text_rows(tx, y, rows, tw, self.f_body, "#e6e9f8")
+            y = max(y, y0 + pad + size + 16)
+            y = self.text_rows(x0 + pad, y, [
+                "Every game's backups, all systems together. A game's own backups are also in its Ⓐ menu."],
+                x1 - x0 - 2 * pad, fill="#c9d0f0")
+        c.create_text((x0 + x1) // 2, y1 - pad - 6, text="Ⓐ Open", fill=ACCENT_TXT, font=self.f_body,
+                      anchor="s", tags="ui")
 
     def draw_info(self, it, box):
+        if it.kind in ("system", "backups"):
+            self._draw_home_info(it, box)
+            return
         c = self.canvas
         x0, y0, x1, y1 = box
         panel = self.panel_image(("ra",), [(34, 44, 92), (24, 30, 70), (16, 20, 48), (10, 12, 32)],
@@ -527,47 +786,17 @@ class RAConsoleView(ConsoleBase):
         return [it.game for it in self.selection() if it.kind == "game"]
 
     # ---- menus -------------------------------------------------------------------
-    def system_menu(self):
-        systems = []
-        if self.lib:
-            systems = list(dict.fromkeys(self.lib.systems + [b.system for b in self.backups]))
-        counts = {}
-        for g in (self.lib.games if self.lib else []):
-            counts[g.system] = counts.get(g.system, 0) + 1
-        opts = [("", ("● " if not self.filter else "") + "All systems")]
-        for s in sorted(systems, key=lambda s: L.SYSTEMS.get(s, "~" + s)):
-            opts.append((s or "?", ("● " if self.filter == s else "") +
-                         (L.SYSTEMS.get(s, s) if s else "Unknown system") + f"  ·  {counts.get(s, 0)}"))
-        opts.append(("cancel", "Cancel"))
-
-        def chosen(key):
-            if key == "cancel":
-                return
-            self.filter = key                       # "" all, "?" unknown system, else a system
-            self.cursor = [0, 0]
-            self.scroll = [0, 0]
-            self._apply_filter()
-        self.show_overlay("Show saves for", "", opts, chosen)
-
-    def _apply_filter(self):
-        games = self.lib.games if self.lib else []
-        want = "" if self.filter == "?" else self.filter
-
-        def keep(sys_):
-            return not self.filter or sys_ == want
-        self.items[0] = [GameItem(g, self.lib) for g in games if keep(g.system)]
-        self.items[1] = [BackupItem(b) for b in self.backups if keep(b.system)]
-        for side in (0, 1):
-            for it in self.items[side]:
-                self._ask_art(it)
-        self.clamp()
-        self.redraw(full=True)
-
     def save_menu(self):
         sel = self.selection()
         if not sel:
             return
         it = sel[0]
+        if it.kind == "system":
+            self.open_system(it.system)
+            return
+        if it.kind == "backups":
+            self.open_backups()
+            return
         if it.kind == "backup":
             what = f"{len(sel)} backups" if len(sel) > 1 else f"{it.title} — {self.tile_title(it)}"
             opts = [("restore", "Restore to RetroArch" + (" (the newest of each game)" if len(sel) > 1 else "")),
@@ -581,6 +810,9 @@ class RAConsoleView(ConsoleBase):
         games = [s.game for s in sel]
         what = f"{len(games)} games" if len(games) > 1 else f"{it.title} ({it.game.system_name})"
         opts = [("backup", "Back up " + ("these games" if len(games) > 1 else "this game"))]
+        mine = [b for b in self.backups if b.key == it.game.key] if len(games) == 1 else []
+        if mine:
+            opts.append(("restore-one", f"Restore a backup… ({len(mine)})"))
         if len(games) == 1 and it.orphan:
             opts.append(("rename", "Rename to match a game file…"))
         if any(s.scattered for s in sel):
@@ -600,7 +832,7 @@ class RAConsoleView(ConsoleBase):
         opts += [("delete", "Delete"), ("details", "Details"), ("cancel", "Cancel")]
         if len(games) > 1:
             opts.remove(("details", "Details"))
-        actions = {"backup": self._backup, "rename": lambda: self._rename(it.game), "tidy": self._tidy_selected,
+        actions = {"backup": self._backup, "restore-one": lambda: self._restore_from(it.game, mine), "rename": lambda: self._rename(it.game), "tidy": self._tidy_selected,
                    "delete": self._delete_games, "details": self.details,
                    "ps1-out": lambda: self._ps1_out(it.game), "ps1-in": lambda: self._ps1_in(it.game),
                    "raw-out": lambda: self._raw_out(it.game), "raw-in": lambda: self._raw_in(it.game),
@@ -609,20 +841,24 @@ class RAConsoleView(ConsoleBase):
         self.show_overlay(what, "", opts, lambda k: actions.get(k, lambda: None)())
 
     def main_menu(self):
-        n_orphans = sum(1 for it in self.items[0] if it.orphan) if self.lib else 0
-        n_scattered = sum(1 for it in self.items[0] if it.scattered) if self.lib else 0
+        scope = self._scope()
+        n_orphans = sum(1 for it in scope if it.orphan)
+        n_scattered = sum(1 for it in scope if it.scattered)
+        where = f" in {short_name(self.cur)}" if self.mode == "games" else ""
         art_on = self.dialog.download_art()
-        opts = [("systems", "Show: " + (L.SYSTEMS.get(self.filter, "Unknown system" if self.filter == "?" else self.filter)
-                                        if self.filter else "All systems") + "…"),
-                ("orphans", f"Find saves with no game file… ({n_orphans})"),
-                ("tidy", f"Tidy scattered saves… ({n_scattered})"),
-                ("folders", "Game folders…"),
-                ("where", "Where RetroArch keeps saves"),
-                ("art", f"Download box art from libretro: {'On' if art_on else 'Off'}"),
-                ("refresh", "Refresh"), ("open", "Open this folder"), ("close", "Close manager"), ("cancel", "Cancel")]
+        opts = []
+        if self.mode != "systems":
+            opts.append(("home", "Back to systems"))
+        opts += [("orphans", f"Find saves with no game file{where}… ({n_orphans})"),
+                 ("tidy", f"Tidy scattered saves{where}… ({n_scattered})"),
+                 ("folders", "Game folders…"),
+                 ("where", "Where RetroArch keeps saves"),
+                 ("art", f"Download box art from libretro: {'On' if art_on else 'Off'}"),
+                 ("refresh", "Refresh"), ("open", "Open this folder"), ("close", "Close manager"), ("cancel", "Cancel")]
 
         def chosen(key):
-            {"systems": self.system_menu, "orphans": self.find_orphans, "tidy": lambda: self.tidy(None),
+            {"home": self.go_home, "orphans": self.find_orphans,
+             "tidy": lambda: self.tidy([it.game for it in self._scope()]),
              "folders": self.folders_menu, "where": self.where, "art": self._toggle_art,
              "refresh": self.reload, "open": self._open_folder, "close": self.dialog.destroy}.get(key, lambda: None)()
         self.show_overlay("RetroArch Save Manager", "", opts, chosen)
@@ -696,7 +932,7 @@ class RAConsoleView(ConsoleBase):
 
     def details(self):
         it = self.current()
-        if it is None:
+        if it is None or it.kind in ("system", "backups"):
             return
         if it.kind == "game":
             g = it.game
@@ -726,8 +962,18 @@ class RAConsoleView(ConsoleBase):
                 refused.append((g.title, str(ex)))
         self._report(R.Report(done=done, refused=refused), "Backed up", "game")
 
-    def _restore(self):
-        sel = [it.backup for it in self.selection() if it.kind == "backup"]
+    def _restore_from(self, g, backups):
+        """A game's own backups, newest first: choose one to restore."""
+        bs = sorted(backups, key=lambda b: -(b.created.timestamp() if b.created else 0))
+        opts = [(str(i), (f"{b.created:%Y-%m-%d %H:%M}" if b.created else b.path.name) +
+                 f"  ·  {sum(1 for x in b.files if x[2] == 'state')} states") for i, b in enumerate(bs[:30])]
+        opts.append(("cancel", "Cancel"))
+        ans = self.prompts.choose(f"Restore {g.title}", "Which backup?", opts)
+        if ans.isdigit():
+            self._restore([bs[int(ans)]])
+
+    def _restore(self, chosen=None):
+        sel = chosen or [it.backup for it in self.selection() if it.kind == "backup"]
         newest = {}
         for b in sel:                                  # several backups of one game: the newest
             if b.key not in newest or (b.created and newest[b.key].created and b.created > newest[b.key].created):
@@ -819,7 +1065,7 @@ class RAConsoleView(ConsoleBase):
                                      "Add the folder your games are in?"):
                 self.folders_menu()
             return
-        orphans = [it.game for it in self.items[0] if it.orphan]
+        orphans = [it.game for it in self._scope() if it.orphan]
         if not orphans:
             self.prompts.showinfo("All matched", "Every save here has a game file with the same name.")
             return
