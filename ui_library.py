@@ -130,6 +130,9 @@ class LibraryApp(tk.Tk):
         self.scrape_status = ""
         self.artwork_dialog = None
         self._esde = None
+        self.bios = {}                       # system -> libbios.SystemBios
+        self._bios_data = None               # (vault entries, emulator targets) on this machine
+        self._bios_loading = False
         self._build()
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self.after(200, self._poll)
@@ -176,6 +179,60 @@ class LibraryApp(tk.Tk):
         self.fill_games()
         self._select([k for k in keys if self.lib.get(k)])
         self.lift()
+
+    # ------------------------------------------------------------------ BIOS status
+    def load_bios(self, then=None):
+        """Read the BIOS Vault and this machine's emulators in the background, then show each
+        system's BIOS status in the systems list."""
+        if self._bios_loading or not self.lib:
+            return
+        self._bios_loading = True
+        systems = {it.system for it in list(self.lib.items.values()) + list(self.lib.local.values())}
+
+        def work():
+            data, statuses = None, {}
+            try:
+                import libbios
+                data = libbios.load(SaveManagerLink())
+                statuses = libbios.status(systems, *data)
+            except Exception as ex:  # noqa - BIOS status is extra information only
+                print("BIOS status:", ex)
+            self.events.put(("call", lambda: self._bios_ready(data, statuses, then)))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _bios_ready(self, data, statuses, then=None):
+        self._bios_loading = False
+        if data is not None:
+            self._bios_data, self.bios = data, statuses
+            if self.lib:
+                self.fill_systems()
+        if then:
+            then()
+
+    def bios_after_checkout(self, systems):
+        """A game was checked out: copy its system's BIOS from the vault if this machine lacks it."""
+        if not self.cfg.get("bios_on_checkout", True):
+            return
+        want = [s for s in systems if self.bios.get(s) and self.bios[s].state == "copy"]
+        if not want or not self._bios_data:
+            return
+        entries, targets = self._bios_data
+
+        def work():
+            import libbios
+            done = []
+            for s in want:
+                try:
+                    c = libbios.install_for(s, entries, targets, log=lambda m: None)
+                except Exception as ex:  # noqa
+                    self.events.put(("log", f"Couldn't copy the {L.system_name(s)} BIOS: {ex}"))
+                    continue
+                if c["installed"]:
+                    done.append(f"{L.system_name(s)} ({c['installed']} file(s))")
+            if done:
+                self.events.put(("log", "Copied the BIOS from your BIOS Vault for " + ", ".join(done) + "."))
+            self.events.put(("call", self.load_bios))
+        threading.Thread(target=work, daemon=True).start()
 
     def _set_icon(self):
         try:
@@ -232,12 +289,15 @@ class LibraryApp(tk.Tk):
         pane = ttk.PanedWindow(self, orient="horizontal")
         pane.pack(fill="both", expand=True, padx=10)
         left = ttk.Frame(pane)
-        self.sys_tree = ttk.Treeview(left, columns=("name", "count"), show="headings", selectmode="browse",
-                                     style="Lib.Treeview")
+        self.sys_tree = ttk.Treeview(left, columns=("name", "count", "bios"), show="headings",
+                                     selectmode="browse", style="Lib.Treeview")
         self.sys_tree.heading("name", text="System")
         self.sys_tree.heading("count", text="Games")
-        self.sys_tree.column("name", width=140, stretch=True)
-        self.sys_tree.column("count", width=100, anchor="e", stretch=False)
+        self.sys_tree.heading("bios", text="BIOS")
+        self.sys_tree.column("name", width=100, minwidth=90, stretch=True)
+        self.sys_tree.column("count", width=78, anchor="e", stretch=False)
+        self.sys_tree.column("bios", width=78, anchor="w", stretch=False)
+        self.sys_tree.tag_configure("bios_missing", foreground=apptheme.AMBER)
         ssb = ttk.Scrollbar(left, orient="vertical", command=self.sys_tree.yview, style=sbstyle)
         self.sys_tree.configure(yscrollcommand=ssb.set)
         ssb.pack(side="right", fill="y")
@@ -337,7 +397,7 @@ class LibraryApp(tk.Tk):
 
     def _place_sashes(self):
         try:
-            self.pane.sashpos(0, 230 if self.compact else 260)
+            self.pane.sashpos(0, 280 if self.compact else 310)
             w = self.pane.winfo_width()
             if w > 600:
                 self.pane.sashpos(1, w - self.details_w - 20)
@@ -525,6 +585,7 @@ class LibraryApp(tk.Tk):
         self.fill_all()
         n = len(lib.items)
         self.set_status(f"Library read: {n} games.")
+        self.load_bios()
 
     def fill_all(self):
         self.fill_systems()
@@ -542,9 +603,13 @@ class LibraryApp(tk.Tk):
                 here[it.system] = here.get(it.system, 0) + 1
         self.sys_tree.delete(*self.sys_tree.get_children())
         total, total_here = sum(counts.values()), sum(here.values())
-        self.sys_tree.insert("", "end", iid=ALL, values=("All systems", self._count_text(total, total_here)))
+        self.sys_tree.insert("", "end", iid=ALL, values=("All systems", self._count_text(total, total_here), ""))
         for s in sorted(counts, key=lambda s: L.system_name(s).lower()):
-            self.sys_tree.insert("", "end", iid=s, values=(L.system_name(s), self._count_text(counts[s], here.get(s, 0))))
+            sb = self.bios.get(s)
+            badge = sb.badge() if sb else ""
+            tags = ("bios_missing",) if sb and sb.state == "missing" and sb.need == "required" else ()
+            self.sys_tree.insert("", "end", iid=s, tags=tags,
+                                 values=(L.system_name(s), self._count_text(counts[s], here.get(s, 0)), badge))
         if self.system_sel not in counts and self.system_sel != ALL:
             self.system_sel = ALL
         self.sys_tree.selection_set(self.system_sel)
@@ -559,6 +624,9 @@ class LibraryApp(tk.Tk):
         if new != self.system_sel:
             self.system_sel = new
             self.fill_games()
+            sb = self.bios.get(new)
+            if sb and sb.need:
+                self.set_status(sb.text(L.system_name(new)))
 
     # ------------------------------------------------------------------ games list
     def _schedule_fill(self):
@@ -878,7 +946,7 @@ class LibraryApp(tk.Tk):
         if self.q and self.q.changed != self._q_seen:
             self._q_seen = self.q.changed
             self.fill_queue()
-            changed, finished = [], False
+            changed, finished, checked_out = [], False, set()
             for j in self.q.snapshot():
                 prev = self._job_states.get(j.id)
                 cur = (j.state, j.percent)
@@ -886,7 +954,11 @@ class LibraryApp(tk.Tk):
                     changed.append(j.key)
                     if j.state in ("done", "failed", "cancelled") and (not prev or prev[0] != j.state):
                         finished = True
+                        if j.state == "done" and j.kind == "checkout":
+                            checked_out.add(j.key.split("/", 1)[0])
                     self._job_states[j.id] = cur
+            if checked_out:
+                self.bios_after_checkout(checked_out)
             if finished:
                 self.fill_systems()
                 self.fill_games()
@@ -1036,6 +1108,10 @@ class SettingsDialog(tk.Toplevel):
         ttk.Button(f, text="Download", command=self.download_rclone).grid(row=r, column=2, pady=(6, 0)); r += 1
         ttk.Label(f, text="rclone does the copying (the same one the Emulator Save Manager uses).",
                   foreground=apptheme.DIM).grid(row=r, column=1, columnspan=2, sticky="w"); r += 1
+        self.v_bios = tk.BooleanVar(value=bool(cfg.get("bios_on_checkout", True)))
+        ttk.Checkbutton(f, text="When I check out a game, copy its system's BIOS from my BIOS Vault into "
+                        "this machine's emulators if they don't have it", variable=self.v_bios).grid(
+            row=r, column=0, columnspan=3, sticky="w", pady=(8, 0)); r += 1
 
         btns = ttk.Frame(f)
         btns.grid(row=r, column=0, columnspan=3, sticky="e", pady=(12, 0))
@@ -1144,6 +1220,7 @@ class SettingsDialog(tk.Toplevel):
         cfg["local_roms"] = local
         cfg["machine_label"] = self.v_label.get().strip()
         cfg["rclone"] = self.v_rclone.get().strip()
+        cfg["bios_on_checkout"] = bool(self.v_bios.get())
         if self.v_kind.get() == "share":
             cfg["share"] = {"host": self.v_host.get().strip(), "share": self.v_share.get().strip(),
                             "folder": self.v_sub.get().strip(), "user": self.v_user.get().strip()}
