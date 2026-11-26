@@ -157,6 +157,26 @@ class LibraryApp(tk.Tk):
         from ui_biosvault import BiosVaultDialog
         return BiosVaultDialog(link, master=self)
 
+    def open_checkup(self):
+        """A report of entries that aren't games, duplicates and formats to convert (changes nothing)."""
+        if not self.lib:
+            messagebox.showinfo("Check-up", "Set up the library first (Settings…).", parent=self)
+            return None
+        from ui_libcheck import CheckupDialog
+        return CheckupDialog(self)
+
+    def show_keys(self, keys):
+        """Show these entries in the main list: every system, no search or filter, selected."""
+        self.v_search.set("")
+        self.v_filter.set(FILTERS[0])
+        systems = {self.lib.get(k).system for k in keys if self.lib.get(k)}
+        self.system_sel = systems.pop() if len(systems) == 1 else ALL
+        if self.sys_tree.exists(self.system_sel):
+            self.sys_tree.selection_set(self.system_sel)
+        self.fill_games()
+        self._select([k for k in keys if self.lib.get(k)])
+        self.lift()
+
     def _set_icon(self):
         try:
             import steamshortcut
@@ -184,6 +204,7 @@ class LibraryApp(tk.Tk):
         self.loc_label.pack(side="left", padx=(4, 12))
         ttk.Button(top, text="Settings…", command=self.open_settings).pack(side="right")
         ttk.Button(top, text="BIOS…", command=self.open_bios).pack(side="right", padx=(0, 8))
+        ttk.Button(top, text="Check-up…", command=self.open_checkup).pack(side="right", padx=(0, 8))
         ttk.Button(top, text="Artwork…", command=self.open_artwork).pack(side="right", padx=(0, 8))
         self.refresh_btn = ttk.Button(top, text="Refresh", command=self.refresh)
         self.refresh_btn.pack(side="right", padx=(0, 8))
