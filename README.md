@@ -38,6 +38,7 @@ Keep all `.py` files in this folder together and run:
 | `exitwatch.py` | sync after an emulator or ES-DE closes (`--watch`) and starting it at sign-in - no GUI |
 | `steamshortcut.py` | Steam: both apps' shortcuts (Game Mode) and their artwork - no GUI |
 | `apptheme.py` | the ROM Library's dark teal theme |
+| `netssl.py` | one TLS setup for every web request: certificates checked against the system's list plus Mozilla's (certifi) |
 | `syncplan.py` | decides what each sync copies: remembers the last synced state, conflicts, folder-card saves as one item - no GUI |
 | `savehistory.py` | Save History: earlier versions of synced saves, kept at every sync; restore - no GUI |
 | `ui_history.py` | Save History window |

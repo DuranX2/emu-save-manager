@@ -619,6 +619,11 @@ def parse_token(token: str):
 EMUDECK_CLOUD_LOGIN_URL = "https://cloud.emudeck.com/login.php"
 
 
+def _tls():
+    import netssl
+    return netssl.context()
+
+
 def emudeck_cloud_type(token: str, url: str = EMUDECK_CLOUD_LOGIN_URL, timeout=20):
     """Ask EmuDeck which cloud this account uses, like the EmuDeck app does:
     'cloud1' -> Emudeck-cloud (B2), anything else -> Emudeck-cloud2 (Wasabi).
@@ -628,7 +633,7 @@ def emudeck_cloud_type(token: str, url: str = EMUDECK_CLOUD_LOGIN_URL, timeout=2
                                  headers={"Content-Type": "text/plain;charset=UTF-8",
                                           "User-Agent": HTTP_HEADERS["User-Agent"]})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with urllib.request.urlopen(req, timeout=timeout, context=_tls()) as r:
             data = json.loads(r.read().decode("utf-8", "replace"))
     except Exception:  # noqa - optional: detection falls back to looking for the saves
         return None
@@ -672,7 +677,7 @@ def register_emudeck_cloud(token: str, url: str = EMUDECK_CLOUD_REGISTER_URL, ti
                                  headers={"Content-Type": "application/json",
                                           "User-Agent": HTTP_HEADERS["User-Agent"]})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with urllib.request.urlopen(req, timeout=timeout, context=_tls()) as r:
             raw = r.read().decode("utf-8", "replace")
     except urllib.error.HTTPError as ex:
         raise EmuDeckCloudError(f"EmuDeck Cloud refused the token (HTTP {ex.code}).")
@@ -796,7 +801,7 @@ def rclone_download_url() -> str:
 def _github_latest_url(tag: str, timeout=20) -> str:
     req = urllib.request.Request("https://api.github.com/repos/rclone/rclone/releases/latest",
                                  headers=dict(HTTP_HEADERS, Accept="application/vnd.github+json"))
-    with urllib.request.urlopen(req, timeout=timeout) as r:
+    with urllib.request.urlopen(req, timeout=timeout, context=_tls()) as r:
         data = json.loads(r.read().decode("utf-8", "replace"))
     for a in data.get("assets", []):
         name = a.get("name", "")
@@ -819,7 +824,7 @@ def rclone_download_candidates():
 
 def _fetch(url: str, progress=None, timeout=60) -> bytes:
     req = urllib.request.Request(url, headers=HTTP_HEADERS)
-    with urllib.request.urlopen(req, timeout=timeout) as r:
+    with urllib.request.urlopen(req, timeout=timeout, context=_tls()) as r:
         total = int(r.headers.get("Content-Length") or 0)
         buf = bytearray()
         while True:

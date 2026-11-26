@@ -443,10 +443,17 @@ class HttpError(Exception):
         self.code, self.body = code, body
 
 
+def _tls(url):
+    if not url.startswith("https:"):
+        return None
+    import netssl
+    return netssl.context()
+
+
 def http_get(url: str, timeout=30) -> bytes:
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with urllib.request.urlopen(req, timeout=timeout, context=_tls(url)) as r:
             return r.read()
     except urllib.error.HTTPError as ex:
         try:
@@ -602,7 +609,10 @@ class ScreenScraperSource:
             raise SourceUnavailable(f"ScreenScraper answered with an error ({ex.code})"
                                     + (f": “{reason}”" if reason else ".")) from None
         except (urllib.error.URLError, OSError) as ex:
-            raise SourceUnavailable(f"Couldn't reach ScreenScraper: {ex}") from None
+            import netssl
+            why = netssl.describe_error(ex)
+            raise SourceUnavailable(f"Couldn't reach ScreenScraper: {why} ({ex})" if why
+                                    else f"Couldn't reach ScreenScraper: {ex}") from None
         try:
             root = ET.fromstring(body)
         except ET.ParseError:

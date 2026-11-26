@@ -93,24 +93,10 @@ def is_newer(latest: str, current: str) -> bool:
 # ---------------------------------------------------------------------------
 # HTTPS
 # ---------------------------------------------------------------------------
-_CA_FILES = ("/etc/ssl/certs/ca-certificates.crt",   # Debian / Ubuntu / SteamOS
-             "/etc/ssl/cert.pem",                    # Arch / SteamOS / macOS
-             "/etc/pki/tls/certs/ca-bundle.crt")     # Fedora
-
-
 def ssl_context() -> ssl.SSLContext:
-    """The system's certificates. A bundle built on Ubuntu looks for them where Ubuntu keeps
-    them, which SteamOS doesn't have, so fall back to the usual files."""
-    ctx = ssl.create_default_context()
-    if not IS_WIN and not ctx.cert_store_stats().get("x509_ca"):
-        for f in _CA_FILES:
-            if os.path.isfile(f):
-                try:
-                    ctx.load_verify_locations(cafile=f)
-                    break
-                except (OSError, ssl.SSLError):
-                    continue
-    return ctx
+    """The shared TLS setup (system authorities plus Mozilla's list; see netssl)."""
+    import netssl
+    return netssl.context()
 
 
 def _open(url: str, timeout: float, accept: str = "*/*"):
