@@ -533,6 +533,28 @@ def save_ss_creds(d: dict):
         pass
 
 
+def _ss_reason(body) -> str:
+    """ScreenScraper's own short error text (it never contains the login)."""
+    if isinstance(body, bytes):
+        body = body.decode("utf-8", "replace")
+    text = " ".join(str(body or "").split())
+    return text[:160] if text and not text.lstrip().startswith("<") else ""
+
+
+def _ss_login_message(body) -> str:
+    """Which part of the login ScreenScraper rejected, from its (French) error text."""
+    reason = _ss_reason(body)
+    low = reason.lower()
+    if "développeur" in low or "developpeur" in low or "developer" in low or "devid" in low:
+        what = "the developer ID or developer password"
+    elif "utilisateur" in low or "user" in low or "ssid" in low:
+        what = "your ScreenScraper username or password"
+    else:
+        what = "the developer ID and password, or your username and password"
+    return (f"ScreenScraper didn't accept {what}. Retype them in Settings (copying and pasting can add "
+            "hidden characters)." + (f" ScreenScraper said: “{reason}”" if reason else ""))
+
+
 class ScreenScraperSource:
     name = "screenscraper"
     label = "ScreenScraper"
@@ -542,7 +564,8 @@ class ScreenScraperSource:
     MEDIA = {"cover": ("box-2D",), "screenshot": ("ss", "sstitle"), "logo": ("wheel-hd", "wheel")}
 
     def __init__(self, creds: dict, get=http_get, base=None):
-        self.creds = creds or {}
+        # spaces at either end are never part of a login: they come from copying and pasting
+        self.creds = {k: (v.strip() if isinstance(v, str) else v) for k, v in (creds or {}).items()}
         self.get = get
         self.base = (base or self.BASE).rstrip("/")
         self.requests_today = None
@@ -571,12 +594,13 @@ class ScreenScraperSource:
                 raise QuotaReached("ScreenScraper's daily limit for your account is reached; "
                                    "the rest will be looked up tomorrow.") from None
             if ex.code == 403:
-                raise SourceUnavailable("ScreenScraper didn't accept the login: check the developer ID "
-                                        "and your username and password in Settings.") from None
+                raise SourceUnavailable(_ss_login_message(ex.body)) from None
             if ex.code in (401, 429, 423):
                 raise SourceUnavailable("ScreenScraper is busy or closed to non-members right now; "
                                         "try again later.") from None
-            raise SourceUnavailable(f"ScreenScraper answered with an error ({ex.code}).") from None
+            reason = _ss_reason(ex.body)
+            raise SourceUnavailable(f"ScreenScraper answered with an error ({ex.code})"
+                                    + (f": “{reason}”" if reason else ".")) from None
         except (urllib.error.URLError, OSError) as ex:
             raise SourceUnavailable(f"Couldn't reach ScreenScraper: {ex}") from None
         try:

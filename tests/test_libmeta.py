@@ -102,7 +102,11 @@ assert ss.available and not M.ScreenScraperSource({"user": "a", "password": "b"}
 print("2.", ss.check_login())
 bad = M.ScreenScraperSource(dict(creds, devpassword="nope"), base=BASE + "/ss")
 try: bad.check_login(); raise SystemExit("bad login accepted")
-except M.SourceUnavailable as ex: print("   wrong developer password:", ex)
+except M.SourceUnavailable as ex: bad_msg = str(ex); print("   wrong developer password:", ex)
+assert "developer ID or developer password" in bad_msg and "identifiants développeur" in bad_msg
+assert "nope" not in bad_msg and "SECRET" not in bad_msg, "the login is never shown"
+pasted = M.ScreenScraperSource({k: f" {v} " if "password" in k else v for k, v in creds.items()}, base=BASE + "/ss")
+print("   pasted with spaces around the passwords:", pasted.check_login())
 
 # 3. ScreenScraper parsing: US name and date, English text and genres, US cover, rating out of 100
 rec, pics = ss.lookup(lb.items["ps2/God of War (USA).iso"])
