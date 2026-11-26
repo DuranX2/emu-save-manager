@@ -7,6 +7,7 @@ from tkinter import filedialog, messagebox, ttk
 
 import autosync
 import savehistory as sh
+import savenames
 
 TITLE = "Save History"
 
@@ -65,8 +66,9 @@ class SaveHistoryDialog(tk.Toplevel):
 
         lf = ttk.LabelFrame(panes, text="Files with history", padding=6)
         panes.add(lf, weight=1)
-        self.files = ttk.Treeview(lf, columns=("file", "n", "last"), show="headings", selectmode="browse")
-        for c, text, w, a in (("file", "File", 260, "w"), ("n", "Versions", 70, "e"),
+        self.files = ttk.Treeview(lf, columns=("game", "file", "n", "last"), show="headings",
+                                  selectmode="browse")
+        for c, text, w, a in (("game", "Game", 220, "w"), ("file", "File", 170, "w"), ("n", "Versions", 70, "e"),
                               ("last", "Last change", 140, "w")):
             self.files.heading(c, text=text)
             self.files.column(c, width=w, anchor=a)
@@ -170,10 +172,12 @@ class SaveHistoryDialog(tk.Toplevel):
         f = self._folder(h, key, folder) if key else None
         self.folder_label.config(text=str(f) if f else "")
         if key:
-            for i, (rel, n, last) in enumerate(h.files(key)):
+            rows = list(h.files(key))
+            names = savenames.for_location(self.app, key, f, [rel for rel, _n, _l in rows])
+            for i, (rel, n, last) in enumerate(rows):
                 iid = f"f{i}"
                 self.file_rows[iid] = rel
-                self.files.insert("", "end", iid=iid, values=(rel, n, sh.fmt_time(last)[:16]))
+                self.files.insert("", "end", iid=iid, values=(names.name(rel), rel, n, sh.fmt_time(last)[:16]))
             loc = h.index["locations"].get(key) or {"files": {}}
             counts = {}
             for e in loc["files"].values():

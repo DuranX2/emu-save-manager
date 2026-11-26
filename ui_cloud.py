@@ -893,8 +893,9 @@ class ConflictsDialog(tk.Toplevel):
     def _load(self):
         self.tree.delete(*self.tree.get_children())
         self.rows = {}
+        namers = {}
         for i, (f, st, item, info) in enumerate(syncplan.all_conflicts()):
-            title = _save_title(st.get("local", ""), item)
+            title = _save_title(st.get("local", ""), item) or self._game(namers, f, st, item)
             what = f"{title}  ({item.split('/')[-1]})" if title else item
             choice = {"local": "this device's", "cloud": "the cloud's"}.get(st.get("resolve", {}).get(item), "?")
             iid = f"c{i}"
@@ -903,6 +904,20 @@ class ConflictsDialog(tk.Toplevel):
                 f"{st.get('emu', '')} / {st.get('label', '')}", what,
                 self._desc(info.get("local_time"), info.get("local_size", 0)),
                 self._desc(info.get("cloud_time"), info.get("cloud_size", 0)), choice))
+
+    def _game(self, namers, f, st, item):
+        """The game's name for any emulator's save (from the same reading as the save list)."""
+        import savenames
+        if f not in namers:
+            local = st.get("local", "")
+            rels = list(st.get("conflicts", {}))
+            try:
+                rels += [r for r in syncplan.local_listing(Path(local))] if local and Path(local).is_dir() else []
+            except Exception:  # noqa
+                pass
+            titles = getattr(getattr(self.parent, "app", None), "titles", None) or savenames.cached_titles()
+            namers[f] = savenames.Namer(st.get("emu", ""), st.get("label", ""), local or None, rels, titles)
+        return namers[f].name(item)
 
     def _choose(self, side):
         sel = self.tree.selection() or self.tree.get_children()[:1]

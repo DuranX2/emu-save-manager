@@ -296,6 +296,16 @@ def _set_aside(runner, local_dir, rpath, p, dry, local_backup, remote_backup, lo
     return ok
 
 
+def _namer(job, local_dir, local):
+    """Game names for this folder's files (for the log), or None if they can't be worked out."""
+    try:
+        import savenames
+        return savenames.Namer(job.get("emu", ""), job.get("label", ""), local_dir, list(local),
+                               savenames.cached_titles())
+    except Exception:  # noqa - the log line just goes without a name
+        return None
+
+
 def sync_job(runner, job: dict, rpath: str, mode: str, dry: bool, local_backup, remote_backup, log) -> dict:
     """Sync one folder.  job: {'emu', 'label', 'local'}.  Returns {'ok': bool, 'nothing_in_cloud',
     'uploaded': bool, 'conflicts': n, 'down': n, 'up': n}."""
@@ -325,8 +335,10 @@ def sync_job(runner, job: dict, rpath: str, mode: str, dry: bool, local_backup, 
     if p["protected"]:
         log(f"Protected {len(p['protected'])} file(s): the incoming copy is empty, so the real one is kept. "
             f"First: {p['protected'][0]}")
+    names = _namer(job, local_dir, local) if p["conflicts"] else None
     for it, c in p["conflicts"].items():
-        log(f"CONFLICT {it}: {c['why']} (this device {_when(c['local_time'])}, cloud {_when(c['cloud_time'])})"
+        game = names.name(it) if names else ""
+        log(f"CONFLICT {it}{f' ({game})' if game else ''}: {c['why']} (this device {_when(c['local_time'])}, cloud {_when(c['cloud_time'])})"
             f" - not copied either way. Choose a side under Conflicts in Cloud Sync.")
     log(f"Plan: {len(p['down'])} file(s) to download, {len(p['up'])} to upload, "
         f"{len(p['conflicts'])} conflict(s).")
