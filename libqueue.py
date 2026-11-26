@@ -242,9 +242,10 @@ class TransferQueue:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write("\n".join(files) + "\n")
         r = self.lib.runner
-        cmd = [r.exe] + (["--config", r.conf] if r.conf else []) + [
+        cmd = [r.exe] + (["--config", r.conf] if r.conf else []) + list(getattr(r, "extra", []) or []) + [
             "copy", src_dir, dst_dir, "--files-from-raw", listfile, "--no-traverse",
-            "--transfers", "2", "--checkers", "4", "--retries", "3", "--low-level-retries", "10",
+            "--transfers", "2", "--checkers", "2", "--multi-thread-streams", "1",
+            "--retries", "3", "--low-level-retries", "10",
             "--use-json-log", "--stats", "1s", "--stats-one-line", "-v"]
         kw = {"creationflags": 0x08000000} if L.IS_WIN else {}
         errors = []

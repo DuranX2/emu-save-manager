@@ -417,6 +417,56 @@ def save_config(cfg: dict):
     _write_json(CONFIG_FILE, cfg)
 
 
+# Windows 10/11 accept only 20 incoming file-sharing connections in total, and every rclone
+# checker, transfer and multi-thread stream can be its own connection.  Keep the library's share
+# use small, so a Deck and a PC (plus any interrupted runs Windows hasn't dropped yet) fit.
+LIBRARY_FLAGS = ["--checkers", "2", "--transfers", "2", "--multi-thread-streams", "1"]
+SHARE_IDLE_TIMEOUT = "15s"         # rclone's SMB default keeps idle connections for a minute
+
+
+def limit_runner(runner):
+    """Apply the library's connection limits to an RcloneRunner (idempotent)."""
+    extra = list(getattr(runner, "extra", []) or [])
+    if "--checkers" not in extra:
+        runner.extra = extra + LIBRARY_FLAGS
+    return runner
+
+
+def ensure_share_options(path=None) -> bool:
+    """Add idle_timeout to an existing [romlibrary] SMB remote that predates it.  Returns True if
+    the file changed.  Only that one setting is added; nothing else in the file is touched."""
+    path = Path(path or OWN_RCLONE_CONF)
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return False
+    cur, start, end, is_smb, has = None, None, None, False, False
+    for i, line in enumerate(lines):
+        t = line.strip()
+        if t.startswith("[") and t.endswith("]"):
+            if cur == SHARE_REMOTE and end is None:
+                end = i
+            cur = t[1:-1]
+            if cur == SHARE_REMOTE:
+                start = i
+        elif cur == SHARE_REMOTE and "=" in t:
+            k, v = (x.strip() for x in t.split("=", 1))
+            is_smb |= k == "type" and v == "smb"
+            has |= k == "idle_timeout"
+    if start is None or not is_smb or has:
+        return False
+    if end is None:
+        end = len(lines)
+    while end > start + 1 and not lines[end - 1].strip():
+        end -= 1
+    lines.insert(end, f"idle_timeout = {SHARE_IDLE_TIMEOUT}")
+    try:
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    except OSError:
+        return False
+    return True
+
+
 def rclone_conf() -> str:
     return str(OWN_RCLONE_CONF)
 
@@ -442,6 +492,7 @@ def setup_share(runner, host: str, share: str, folder: str, user: str, password:
         lines.append(f"pass = {obscured}")
     if domain:
         lines.append(f"domain = {domain.strip()}")
+    lines.append(f"idle_timeout = {SHARE_IDLE_TIMEOUT}")
     _replace_conf_section(OWN_RCLONE_CONF, SHARE_REMOTE, "\n".join(lines) + "\n")
     return f"{SHARE_REMOTE}:" + "/".join(p.strip("/\\") for p in (share, folder) if p.strip("/\\"))
 
@@ -488,7 +539,9 @@ def _replace_conf_section(path: Path, name: str, section: str):
 # ---------------------------------------------------------------------------
 class Library:
     def __init__(self, runner, location: str, local_roms: str, machine: str = "", label: str = ""):
-        self.runner = runner
+        self.runner = limit_runner(runner)
+        if getattr(runner, "conf", "") and Path(runner.conf) == OWN_RCLONE_CONF:
+            ensure_share_options(OWN_RCLONE_CONF)
         self.location = location
         self.local_roms = local_roms
         self.machine = machine or machine_id()

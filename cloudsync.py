@@ -415,9 +415,13 @@ class RcloneRunner:
         self.exe, self.conf, self.log = exe, conf, log
         self.cancelled = False
         self._proc = None
+        self.extra = []            # flags added to every command (the ROM Library sets its limits here)
+
+    def _cmd(self, args) -> list:
+        return [self.exe] + (["--config", self.conf] if self.conf else []) + list(self.extra) + list(args)
 
     def run(self, args) -> int:
-        cmd = [self.exe] + (["--config", self.conf] if self.conf else []) + list(args)
+        cmd = self._cmd(args)
         self.log("$ " + _display(cmd))
         kw = {"creationflags": 0x08000000} if IS_WIN else {}      # no console window
         try:
@@ -437,7 +441,7 @@ class RcloneRunner:
         """Run rclone quietly; returns (exit code, output text).  Output is not logged.
         With merge=False only stdout is returned when rclone succeeds (warnings on stderr would
         corrupt JSON); on failure stderr is appended so the error can be shown."""
-        cmd = [self.exe] + (["--config", self.conf] if self.conf else []) + list(args)
+        cmd = self._cmd(args)
         kw = {"creationflags": 0x08000000} if IS_WIN else {}
         try:
             r = subprocess.run(cmd, stdout=subprocess.PIPE,

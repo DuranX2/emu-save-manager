@@ -1049,7 +1049,7 @@ class SettingsDialog(tk.Toplevel):
         exe = form["rclone"] or cloudsync.find_rclone("")
         if not exe or not Path(exe).is_file():
             raise RuntimeError("rclone wasn't found. Click Download, or enter where rclone is.")
-        return cloudsync.RcloneRunner(exe, L.rclone_conf(), lambda m: None)
+        return L.limit_runner(cloudsync.RcloneRunner(exe, L.rclone_conf(), lambda m: None))
 
     @staticmethod
     def _location(runner, form):
