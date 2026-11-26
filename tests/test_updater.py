@@ -186,7 +186,35 @@ try:
     U.unpack_linux(bad2, T / "unp3"); raise SystemExit("symlink accepted")
 except U.UpdateError:
     pass
-print("7. the Linux package is unpacked; paths outside the folder and links are refused: ok")
+def esc_link(t):
+    ti = tarfile.TarInfo("EmuSaveManager-linux/app/lnk2"); ti.type = tarfile.SYMTYPE; ti.linkname = "../../../../etc/passwd"
+    t.addfile(ti)
+bad3 = T / "bad3.tar.gz"; make_pkg(bad3, esc_link)
+try:
+    U.unpack_linux(bad3, T / "unp4"); raise SystemExit("escaping symlink accepted")
+except U.UpdateError:
+    pass
+def hard(t):
+    ti = tarfile.TarInfo("EmuSaveManager-linux/app/hl"); ti.type = tarfile.LNKTYPE; ti.linkname = "EmuSaveManager-linux/install.sh"
+    t.addfile(ti)
+bad4 = T / "bad4.tar.gz"; make_pkg(bad4, hard)
+try:
+    U.unpack_linux(bad4, T / "unp5"); raise SystemExit("hard link accepted")
+except U.UpdateError:
+    pass
+def pyi_link(t):                      # what PyInstaller does with Pillow's libraries
+    data = b"\x7fELF lib"
+    ti = tarfile.TarInfo("EmuSaveManager-linux/app/_internal/pillow.libs/libpng16.so.16"); ti.size = len(data)
+    t.addfile(ti, io.BytesIO(data))
+    ti = tarfile.TarInfo("EmuSaveManager-linux/app/_internal/libpng16.so.16"); ti.type = tarfile.SYMTYPE
+    ti.linkname = "pillow.libs/libpng16.so.16"; t.addfile(ti)
+ok = T / "ok.tar.gz"; make_pkg(ok, pyi_link)
+d = U.unpack_linux(ok, T / "unp6")
+assert (d / "app/_internal/libpng16.so.16").read_bytes() == b"\x7fELF lib"
+sh = (Path(ROOT) / "build_linux.sh").read_text()
+assert "--dereference" in sh and "still contains links" in sh
+print("7. the Linux package is unpacked; paths outside the folder and unsafe links are refused, "
+      "links inside the package are kept: ok")
 
 # 8. Linux: the script waits for the app to close, runs install.sh, starts the app again
 os.environ["XDG_DATA_HOME"] = str(T / "data")

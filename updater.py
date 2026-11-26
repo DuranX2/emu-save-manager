@@ -331,8 +331,14 @@ def unpack_linux(archive: Path, dest: Path) -> Path:
                 target = (dest / m.name).resolve()
                 if root != target and root not in target.parents:
                     raise UpdateError(f"The package has an unsafe path: {m.name}")
-                if m.issym() or m.islnk() or m.isdev():
+                if m.isdev() or m.islnk():
                     raise UpdateError(f"The package has an unexpected link: {m.name}")
+                if m.issym():
+                    # PyInstaller links bundled libraries (e.g. _internal/libpng.so ->
+                    # pillow.libs/libpng.so); allow only relative links that stay in the package
+                    to = (target.parent / m.linkname).resolve()
+                    if os.path.isabs(m.linkname) or (root != to and root not in to.parents):
+                        raise UpdateError(f"The package has an unexpected link: {m.name}")
             if hasattr(tarfile, "data_filter"):
                 t.extractall(dest, filter="data")
             else:                                                       # Python < 3.12

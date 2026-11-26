@@ -37,7 +37,12 @@ echo "certifi bundled"
 [ "$(cat "$PKG/app/_internal/app_version.txt")" = "${APP_VER:-0.0.0}" ] || { echo "Version not stamped"; exit 1; }
 echo "Version stamped: ${APP_VER:-0.0.0}"
 chmod +x "$PKG/install.sh" "$PKG/app/EmuSaveManager"
-tar -C dist -czf dist/EmuSaveManager-linux-x86_64.tar.gz EmuSaveManager-linux
+# store real files, not links: versions up to 1.6.1 refuse any link in an update package
+tar -C dist --dereference --hard-dereference -czf dist/EmuSaveManager-linux-x86_64.tar.gz EmuSaveManager-linux
+if tar -tvzf dist/EmuSaveManager-linux-x86_64.tar.gz | grep -q '^[lh]'; then
+  echo "The package still contains links"; exit 1
+fi
+echo "No links in the package"
 # the app's Update button checks the download against this before installing it
 (cd dist && sha256sum EmuSaveManager-linux-x86_64.tar.gz > EmuSaveManager-linux-x86_64.tar.gz.sha256)
 cat dist/EmuSaveManager-linux-x86_64.tar.gz.sha256
