@@ -523,8 +523,8 @@ class ArtworkDialog(tk.Toplevel):
         app.artwork_dialog = self
 
     def _creds(self):
-        return {"user": self.v_user.get().strip(), "password": self.v_pass.get(),
-                "devid": self.v_devid.get().strip(), "devpassword": self.v_devpass.get()}
+        return {"user": self.v_user.get().strip(), "password": self.v_pass.get().strip(),
+                "devid": self.v_devid.get().strip(), "devpassword": self.v_devpass.get().strip()}
 
     def _save(self):
         M.save_ss_creds(self._creds())
