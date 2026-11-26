@@ -147,4 +147,43 @@ assert (g3 / f"{hid}_hero.png").read_bytes() == b"the user's own banner"
 assert ss.refresh_art([cfg4], art=art) == [], "a picture the user replaced isn't overwritten"
 print("10. updated artwork replaces only files the app wrote itself: ok")
 
+# ---- the ROM Library: its own shortcut (same program, --rom-library) with its own artwork ----
+lib_art = ss.art_dir("library")
+assert (lib_art / "capsule.png").is_file() and lib_art != art and lib_art.name == "library", lib_art
+assert (lib_art / "capsule.png").read_bytes() != (art / "capsule.png").read_bytes(), "different pictures"
+cfg5 = H / ".local/share/Steam/userdata/1999/config"; cfg5.mkdir(parents=True)
+both = (b"\x00shortcuts\0"
+        + b"\x000\0" + i("appid", -33333333) + s("AppName", "EmuSaveManager")
+        + s("Exe", '"/opt/EmuSaveManager/EmuSaveManager"') + s("LaunchOptions", "--rom-library") + b"\x08"
+        + b"\x001\0" + i("appid", -22222222) + s("AppName", "EmuSaveManager")
+        + s("Exe", '"/opt/EmuSaveManager/EmuSaveManager"') + s("LaunchOptions", "") + b"\x08"
+        + b"\x08\x08")
+(cfg5 / "shortcuts.vdf").write_bytes(both)
+lid = struct.unpack("<I", struct.pack("<i", -33333333))[0]
+sid2 = struct.unpack("<I", struct.pack("<i", -22222222))[0]
+assert [x[1] for x in ss.find_ours([cfg5], "library")] == [lid] and [x[1] for x in ss.find_ours([cfg5])] == [sid2]
+ss.refresh_art([cfg5])
+assert (cfg5 / "grid" / f"{lid}p.png").read_bytes() == (lib_art / "capsule.png").read_bytes(), "library art"
+assert (cfg5 / "grid" / f"{sid2}p.png").read_bytes() == (art / "capsule.png").read_bytes(), "save manager art"
+print("11. a ROM Library shortcut added by hand (--rom-library) gets the ROM Library's own artwork: ok")
+
+cfg6 = H / ".local/share/Steam/userdata/2000/config"; cfg6.mkdir(parents=True)
+ss.add("/opt/EmuSaveManager/EmuSaveManager", "/opt/EmuSaveManager", config_dirs=[cfg6], log=lambda m: None)
+ss.add("/opt/EmuSaveManager/EmuSaveManager", "/opt/EmuSaveManager", config_dirs=[cfg6], log=lambda m: None,
+       app="library")
+ss.add("/opt/EmuSaveManager/EmuSaveManager", "/opt/EmuSaveManager", config_dirs=[cfg6], log=lambda m: None,
+       app="library")                                                   # again: updated, not duplicated
+root6 = ss.loads((cfg6 / "shortcuts.vdf").read_bytes())
+ents = [v for _t, _k, v in ss._get(root6, "shortcuts")]
+names = sorted((ss._get(e, "AppName"), ss._get(e, "LaunchOptions")) for e in ents)
+assert names == [("Emulator Save Manager", ""), ("ROM Library", "--rom-library")], names
+lib_entry = next(e for e in ents if ss._get(e, "AppName") == "ROM Library")
+lsid = struct.unpack("<I", struct.pack("<i", ss._get(lib_entry, "appid")))[0]
+assert (cfg6 / "grid" / f"{lsid}_hero.png").read_bytes() == (lib_art / "hero.png").read_bytes()
+assert ss._get(lib_entry, "icon").endswith(f"{lsid}_icon.png")
+assert ss.remove([cfg6], log=lambda m: None) == 1
+assert ss._get(ss.loads((cfg6 / "shortcuts.vdf").read_bytes()), "shortcuts") == []
+assert not (cfg6 / "grid" / f"{lsid}_hero.png").exists()
+print("12. both shortcuts added side by side (no duplicates), each with its own artwork; remove takes both: ok")
+
 print("STEAM SHORTCUT OK")

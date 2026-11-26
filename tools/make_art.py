@@ -1,9 +1,12 @@
 """Draws the app icon and the Steam library artwork as SVG and renders them to PNG.
 
     python tools/make_art.py            -> packaging/art/*.svg, *.png, emu-save-manager.ico
+    python tools/make_art.py library    -> packaging/art/library/*  (the ROM Library's own set)
 
 Needs rsvg-convert (librsvg) to render, and ImageMagick's `convert` for the Windows .ico.
-Original artwork (a generic memory card, a cloud and sync arrows), no console makers' marks.
+Original artwork, no console makers' marks: the Save Manager's is a generic memory card with a
+cloud and sync arrows (blue); the ROM Library's is a shelf of game cases with a check-out arrow
+(teal and amber), so the two apps are easy to tell apart in Game Mode.
 The PNGs are committed, so builds don't need these tools.
 """
 import shutil
@@ -15,11 +18,12 @@ NAVY, BLUE, SKY, CYAN, WHITE = "#0d1830", "#1f5fa8", "#3d8bfd", "#5fd3f3", "#fff
 FONT = "DejaVu Sans, Verdana, Arial, sans-serif"
 
 
-def defs():
+def defs(bg0=None, bg1=None):
+    bg0, bg1 = bg0 or BLUE, bg1 or NAVY
     return f"""
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="{BLUE}"/><stop offset="1" stop-color="{NAVY}"/>
+      <stop offset="0" stop-color="{bg0}"/><stop offset="1" stop-color="{bg1}"/>
     </linearGradient>
     <linearGradient id="card" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#f4f8ff"/><stop offset="1" stop-color="#c9d9f2"/>
@@ -101,10 +105,82 @@ def title(x, y, size, anchor="middle", lines=("Emulator", "Save Manager")):
     return f'<g filter="url(#shadow)">{t}</g>'
 
 
-def svg(w, h, body, background=True):
+def svg(w, h, body, background=True, colors=None):
     bg = f'<rect width="{w}" height="{h}" fill="url(#bg)"/>' if background else ""
     return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="0 0 {w} {h}">'
-            f'{defs()}{bg}{body}</svg>')
+            f'{defs(*(colors or ()))}{bg}{body}</svg>')
+
+
+# ---- the ROM Library's set ------------------------------------------------------------------
+TEAL_DARK, TEAL, MINT, AMBER, CREAM = "#08262a", "#13806f", "#46d6b8", "#f2b84b", "#fff6e4"
+LIB_OUT = OUT / "library"
+
+
+def lib_emblem(cx, cy, s):
+    """A shelf of three game cases (one pulled forward) with a round badge holding a down arrow
+    into a tray: games checked out of the library. About 2*s wide, centred at (cx, cy)."""
+    shelf_y = cy + 0.62 * s
+    cases = []
+    specs = [(-0.62, 0.0, 0.34, "#e9f6f2", TEAL), (-0.22, -0.1, 0.38, CREAM, AMBER), (0.22, 0.04, 0.34, "#e9f6f2", MINT)]
+    for dx, dy, wf, face, band in specs:
+        w, h = wf * s, 1.12 * s
+        x, y = cx + dx * s, shelf_y - h + dy * s
+        cases.append(
+            f'<g filter="url(#shadow)"><rect x="{x:.1f}" y="{y:.1f}" width="{w:.1f}" height="{h - dy * s:.1f}" '
+            f'rx="{0.05 * s:.1f}" fill="{face}"/>'
+            f'<rect x="{x + 0.05 * s:.1f}" y="{y + 0.12 * s:.1f}" width="{w - 0.1 * s:.1f}" height="{0.3 * s:.1f}" '
+            f'rx="{0.03 * s:.1f}" fill="{band}"/>'
+            f'<rect x="{x + 0.08 * s:.1f}" y="{y + 0.56 * s:.1f}" width="{w - 0.16 * s:.1f}" height="{0.05 * s:.1f}" '
+            f'rx="{0.02 * s:.1f}" fill="{TEAL_DARK}" opacity="0.35"/>'
+            f'<rect x="{x + 0.08 * s:.1f}" y="{y + 0.68 * s:.1f}" width="{(w - 0.16 * s) * 0.7:.1f}" '
+            f'height="{0.05 * s:.1f}" rx="{0.02 * s:.1f}" fill="{TEAL_DARK}" opacity="0.25"/></g>')
+    shelf = (f'<rect x="{cx - 0.8 * s:.1f}" y="{shelf_y:.1f}" width="{1.36 * s:.1f}" height="{0.1 * s:.1f}" '
+             f'rx="{0.04 * s:.1f}" fill="{AMBER}" filter="url(#shadow)"/>')
+    bx, by, r = cx + 0.62 * s, cy + 0.34 * s, 0.36 * s
+    badge = (f'<g filter="url(#shadow)"><circle cx="{bx:.1f}" cy="{by:.1f}" r="{r:.1f}" fill="{AMBER}"/>'
+             f'<circle cx="{bx:.1f}" cy="{by:.1f}" r="{r * 0.84:.1f}" fill="none" stroke="{CREAM}" '
+             f'stroke-width="{0.03 * s:.1f}" opacity="0.7"/>'
+             f'<path d="M{bx:.1f},{by - 0.5 * r:.1f} v{0.62 * r:.1f} m{-0.3 * r:.1f},{-0.3 * r:.1f} '
+             f'l{0.3 * r:.1f},{0.32 * r:.1f} l{0.3 * r:.1f},{-0.32 * r:.1f}" stroke="{TEAL_DARK}" '
+             f'stroke-width="{0.13 * r:.1f}" fill="none" stroke-linecap="round" stroke-linejoin="round"/>'
+             f'<path d="M{bx - 0.45 * r:.1f},{by + 0.3 * r:.1f} v{0.18 * r:.1f} h{0.9 * r:.1f} v{-0.18 * r:.1f}" '
+             f'stroke="{TEAL_DARK}" stroke-width="{0.12 * r:.1f}" fill="none" stroke-linecap="round" '
+             f'stroke-linejoin="round"/></g>')
+    return "".join(cases) + shelf + badge
+
+
+def lib_title(x, y, size, anchor="middle"):
+    return title(x, y, size, anchor, lines=("ROM", "Library"))
+
+
+LIB_COLORS = (TEAL, TEAL_DARK)
+LIB_ART = {
+    "icon": (512, 512, (f'<rect x="16" y="16" width="480" height="480" rx="104" fill="url(#bg)"/>'
+                        f'{lib_emblem(250, 236, 172)}'), False),
+    "capsule": (600, 900, pixels(600, 900, 40, 0.10) + lib_emblem(290, 330, 200) + lib_title(300, 700, 74), True),
+    "wide": (920, 430, pixels(920, 430, 36, 0.10) + lib_emblem(215, 200, 140)
+             + lib_title(440, 190, 70, anchor="start"), True),
+    "hero": (1920, 620, pixels(1920, 620, 48, 0.12) + lib_emblem(1540, 290, 210), True),
+    "logo": (1280, 420, lib_emblem(200, 200, 150) + lib_title(420, 185, 100, anchor="start"), False),
+}
+
+
+def render(art, out, colors=None, ico="emu-save-manager.ico"):
+    out.mkdir(parents=True, exist_ok=True)
+    for name, (w, h, body, background) in art.items():
+        (out / f"{name}.svg").write_text(svg(w, h, body, background, colors), encoding="utf-8")
+    if not shutil.which("rsvg-convert"):
+        print("rsvg-convert not found: wrote the SVGs only")
+        return
+    for name in art:
+        subprocess.run(["rsvg-convert", "-o", str(out / f"{name}.png"), str(out / f"{name}.svg")], check=True)
+    for size in (16, 32, 48, 64, 128, 256):
+        subprocess.run(["rsvg-convert", "-w", str(size), "-h", str(size), "-o",
+                        str(out / f"icon-{size}.png"), str(out / "icon.svg")], check=True)
+    if shutil.which("convert"):
+        subprocess.run(["convert"] + [str(out / f"icon-{s}.png") for s in (16, 32, 48, 64, 128, 256)]
+                       + [str(out / ico)], check=True)
+    print("Wrote", ", ".join(sorted(p.name for p in out.iterdir() if p.is_file())))
 
 
 ART = {
@@ -121,6 +197,12 @@ ART = {
 
 
 def main():
+    import sys
+    which = sys.argv[1] if len(sys.argv) > 1 else "all"
+    if which in ("library", "all"):
+        render(LIB_ART, LIB_OUT, LIB_COLORS, ico="rom-library.ico")
+    if which == "library":
+        return
     OUT.mkdir(parents=True, exist_ok=True)
     for name, (w, h, body, background) in ART.items():
         (OUT / f"{name}.svg").write_text(svg(w, h, body, background), encoding="utf-8")

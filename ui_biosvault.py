@@ -17,13 +17,18 @@ STATUS_TEXT = {"verified": "Verified", "identified": "Identified", "side-file": 
 
 
 class BiosVaultDialog(tk.Toplevel):
-    def __init__(self, app):
-        super().__init__(app)
+    def __init__(self, app, master=None):
+        """app gives the settings and emulator folders (the Save Manager's, or SaveManagerLink in
+        the ROM Library); master is the window it belongs to (app when not given)."""
+        master = master or app
+        super().__init__(master)
         self.app = app
         self.title("BIOS Vault")
         self.geometry("1220x720")
         self.minsize(980, 560)
-        self.transient(app)
+        self.transient(master)
+        import apptheme
+        self.c = apptheme.colors(master)
         self.q = queue.Queue()
         self.busy = False
         self.entries = []
@@ -66,7 +71,7 @@ class BiosVaultDialog(tk.Toplevel):
         ttk.Button(bar, text="Add files…", command=self.add_files).pack(side="left")
         ttk.Button(bar, text="Add folder…", command=self.add_folder).pack(side="left", padx=4)
         ttk.Button(bar, text="Move to system…", command=self.move_selected).pack(side="left")
-        self.vault_info = ttk.Label(bar, text="", foreground="#555")
+        self.vault_info = ttk.Label(bar, text="", foreground=self.c["dim"])
         self.vault_info.pack(side="right")
         tf = ttk.Frame(left)
         tf.pack(fill="both", expand=True)
@@ -81,7 +86,7 @@ class BiosVaultDialog(tk.Toplevel):
         self.tree.column("what", width=230)
         self.tree.column("status", width=86, stretch=False)
         self.tree.column("size", width=82, anchor="e", stretch=False)
-        for tag, color in (("damaged", "#b3261e"), ("unknown", "#8a6d00"), ("system", "")):
+        for tag, color in (("damaged", self.c["bad"]), ("unknown", self.c["warn"]), ("system", "")):
             self.tree.tag_configure(tag, foreground=color or None)
         self.tree.tag_configure("system", font=("TkDefaultFont", 10, "bold"))
         sb = ttk.Scrollbar(tf, orient="vertical", command=self.tree.yview)
@@ -104,7 +109,7 @@ class BiosVaultDialog(tk.Toplevel):
         self.ttree.heading("state", text="In place")
         self.ttree.column("#0", width=330)
         self.ttree.column("state", width=110, stretch=False)
-        self.ttree.tag_configure("note", foreground="#8a6d00")
+        self.ttree.tag_configure("note", foreground=self.c["warn"])
         self.ttree.tag_configure("emu", font=("TkDefaultFont", 10, "bold"))
         sb = ttk.Scrollbar(tf, orient="vertical", command=self.ttree.yview)
         self.ttree.configure(yscrollcommand=sb.set)
@@ -123,10 +128,10 @@ class BiosVaultDialog(tk.Toplevel):
                              "except your own cloud drive (folder \"Emulator BIOS Vault\"). Files are "
                              "identified by content; unknown or damaged files are kept but never installed. "
                              "Nothing in an emulator folder is overwritten.",
-                  wraplength=1180, foreground="#555", padding=(10, 2)).pack(anchor="w")
+                  wraplength=1180, foreground=self.c["dim"], padding=(10, 2)).pack(anchor="w")
 
         self.log = tk.Text(self, height=8, wrap="word", state="disabled", relief="flat",
-                           background="#f6f6f6")
+                           background=self.c["log"], foreground=self.c["log_fg"])
         self.log.pack(fill="x", padx=10, pady=(4, 10))
 
     # ---- helpers -----------------------------------------------------------------------

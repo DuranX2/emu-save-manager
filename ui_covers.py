@@ -12,6 +12,8 @@ import libmeta as M
 import romlibrary as L
 
 APP_NAME = "ROM Library"
+import apptheme
+
 BADGE = {"here": ("✔", "#2e7d32"), "partial": ("◐", "#e65100"), "local_only": ("●", "#1565c0"),
          "busy": ("⬇", "#6a1b9a"), "elsewhere": ("⇄", "#6d6d6d")}
 
@@ -99,7 +101,7 @@ class CoverGrid(ttk.Frame):
         self.sel = []
         self.anchor = None
         self.cols = 1
-        self.canvas = tk.Canvas(self, highlightthickness=0, background="#20242b")
+        self.canvas = tk.Canvas(self, highlightthickness=0, background=apptheme.COVER_BG)
         sbstyle = "Lib.Vertical.TScrollbar" if app.compact else "Vertical.TScrollbar"
         self.sb = ttk.Scrollbar(self, orient="vertical", command=self._yview, style=sbstyle)
         self.canvas.configure(yscrollcommand=self.sb.set)
@@ -215,15 +217,15 @@ class CoverGrid(ttk.Frame):
         if not it:
             return
         if selected:
-            c.create_rectangle(x - 6, y - 6, x + self.tw + 6, y + self.th + 2, fill="#3d6fb6", outline="#7fb0ff", width=2)
+            c.create_rectangle(x - 6, y - 6, x + self.tw + 6, y + self.th + 2, fill=apptheme.ACCENT_DARK, outline=apptheme.ACCENT, width=2)
         img = app.images.get(key)
         if img:
             iw, ih = img.width(), img.height()
             c.create_image(x + self.tw // 2, y + self.cover_h - ih // 2 if ih < self.cover_h else y,
                            image=img, anchor="n" if ih >= self.cover_h else "n")
         else:
-            c.create_rectangle(x, y, x + self.tw, y + self.cover_h, fill="#323843", outline="#454c58")
-            c.create_text(x + self.tw // 2, y + 22, text=L.system_name(it.system), fill="#9aa3b2",
+            c.create_rectangle(x, y, x + self.tw, y + self.cover_h, fill="#1f3a37", outline=apptheme.LINE)
+            c.create_text(x + self.tw // 2, y + 22, text=L.system_name(it.system), fill=apptheme.DIM,
                           font=("TkDefaultFont", 8), width=self.tw - 10)
             c.create_text(x + self.tw // 2, y + self.cover_h // 2, text=app.display_title(key), fill="#e8ecf2",
                           font=("TkDefaultFont", 10, "bold"), width=self.tw - 16, justify="center")
@@ -327,7 +329,7 @@ class DetailsPanel(ttk.Frame):
         self.pw = width
         self.cover_w, self.cover_h = width - 40, int((width - 40) * 1.4)
         self.key = None
-        self.canvas = tk.Canvas(self, highlightthickness=0, width=width)
+        self.canvas = tk.Canvas(self, highlightthickness=0, width=width, background=apptheme.BG)
         sbstyle = "Lib.Vertical.TScrollbar" if app.compact else "Vertical.TScrollbar"
         sb = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview, style=sbstyle)
         self.canvas.configure(yscrollcommand=sb.set)
@@ -359,7 +361,7 @@ class DetailsPanel(ttk.Frame):
         keys = keys or []
         self.key = keys[0] if len(keys) == 1 else None
         if not keys:
-            self._label("Select a game to see its details.", foreground="#777").pack(pady=30)
+            self._label("Select a game to see its details.", foreground=apptheme.DIM).pack(pady=30)
             return
         lib = app.lib
         if len(keys) > 1:
@@ -376,13 +378,13 @@ class DetailsPanel(ttk.Frame):
             tk.Label(self.inner, image=img, borderwidth=0).pack(pady=(6, 8))
         else:
             ph = tk.Canvas(self.inner, width=self.cover_w, height=int(self.cover_w * 0.6), highlightthickness=0,
-                           background="#323843")
+                           background="#1f3a37")
             ph.create_text(self.cover_w // 2, int(self.cover_w * 0.3), text="No cover yet" if not rec.get("media")
                            else "Loading…", fill="#c0c6d0")
             ph.pack(pady=(6, 8))
         self._label(rec.get("title") or it.title, font=("TkDefaultFont", 13, "bold"))
         if rec.get("title") and rec["title"] != it.title:
-            self._label(it.title, foreground="#666")
+            self._label(it.title, foreground=apptheme.DIM)
         facts = [("System", L.system_name(it.system)), ("Released", rec.get("date") or rec.get("year")),
                  ("Genre", rec.get("genre")), ("Players", rec.get("players")),
                  ("Developer", rec.get("developer")), ("Publisher", rec.get("publisher")),
@@ -392,7 +394,7 @@ class DetailsPanel(ttk.Frame):
         r = 0
         for a, b in facts:
             if b:
-                ttk.Label(grid, text=a, foreground="#666").grid(row=r, column=0, sticky="nw", padx=(0, 10))
+                ttk.Label(grid, text=a, foreground=apptheme.DIM).grid(row=r, column=0, sticky="nw", padx=(0, 10))
                 ttk.Label(grid, text=b, wraplength=self.pw - 130).grid(row=r, column=1, sticky="w")
                 r += 1
         st, detail = lib.status(key)
@@ -405,7 +407,7 @@ class DetailsPanel(ttk.Frame):
         if job:
             where = (f"{L.KINDS_VERB.get(job.kind, job.kind)} {job.percent}%" if job.state == "running"
                      else "Waiting in the transfer queue")
-        self._label(where, foreground={"here": "#2e7d32", "partial": "#e65100", "local_only": "#1565c0"}.get(st, "#333"))
+        self._label(where, foreground=apptheme.STATUS.get(st, apptheme.DIM))
         self._buttons([key])
         if rec.get("desc"):
             ttk.Separator(self.inner).pack(fill="x", pady=8)
@@ -417,7 +419,7 @@ class DetailsPanel(ttk.Frame):
         if src:
             names = {"es-de": "ES-DE", "screenscraper": "ScreenScraper", "libretro": "libretro thumbnails",
                      "manual": "ScreenScraper (picked by hand)"}
-            self._label(f"Information from {names.get(src, src)}", foreground="#888", font=("TkDefaultFont", 8)).pack(pady=(8, 0))
+            self._label(f"Information from {names.get(src, src)}", foreground=apptheme.DIM, font=("TkDefaultFont", 8)).pack(pady=(8, 0))
         if app.can_match():
             ttk.Button(self.inner, text="Wrong game? Find the right one…",
                        command=lambda: MatchDialog(app, key)).pack(anchor="w", pady=(6, 10))
@@ -473,7 +475,7 @@ class ArtworkDialog(tk.Toplevel):
         ttk.Checkbutton(f, text="ES-DE on this machine", variable=self.v_esde).grid(row=r, column=0, sticky="w", pady=(6, 0))
         ttk.Label(f, text=(es.summary() + ". Run this on the machine where you scraped in ES-DE.") if es.available
                   else "Nothing found on this machine (run this on the machine where you scraped in ES-DE).",
-                  foreground="#555", wraplength=520).grid(row=r, column=1, columnspan=2, sticky="w", pady=(6, 0)); r += 1
+                  foreground=apptheme.DIM, wraplength=520).grid(row=r, column=1, columnspan=2, sticky="w", pady=(6, 0)); r += 1
         ttk.Checkbutton(f, text="ScreenScraper", variable=self.v_ss).grid(row=r, column=0, sticky="nw", pady=(8, 0))
         box = ttk.Frame(f)
         box.grid(row=r, column=1, columnspan=2, sticky="w", pady=(8, 0)); r += 1
@@ -483,15 +485,15 @@ class ArtworkDialog(tk.Toplevel):
             ttk.Label(box, text=label).grid(row=i, column=0, sticky="w", pady=1)
             ttk.Entry(box, textvariable=var, width=28, show="•" if secret else "").grid(row=i, column=1, sticky="w", padx=6)
         ttk.Label(box, text="The developer ID comes from ScreenScraper's forum. These are kept only on this "
-                  "machine, never in the library.", foreground="#666", wraplength=420).grid(row=4, column=0, columnspan=2, sticky="w")
+                  "machine, never in the library.", foreground=apptheme.DIM, wraplength=420).grid(row=4, column=0, columnspan=2, sticky="w")
         tb = ttk.Frame(box)
         tb.grid(row=5, column=0, columnspan=2, sticky="w", pady=(4, 0))
         ttk.Button(tb, text="Test", command=self.test).pack(side="left")
-        self.test_label = ttk.Label(tb, text="", foreground="#555", wraplength=360)
+        self.test_label = ttk.Label(tb, text="", foreground=apptheme.DIM, wraplength=360)
         self.test_label.pack(side="left", padx=8)
         ttk.Checkbutton(f, text="libretro thumbnails", variable=self.v_lr).grid(row=r, column=0, sticky="w", pady=(8, 0))
         ttk.Label(f, text="Free box art and screenshots, no account needed (no descriptions).",
-                  foreground="#555").grid(row=r, column=1, columnspan=2, sticky="w", pady=(8, 0)); r += 1
+                  foreground=apptheme.DIM).grid(row=r, column=1, columnspan=2, sticky="w", pady=(8, 0)); r += 1
 
         ttk.Separator(f).grid(row=r, column=0, columnspan=3, sticky="ew", pady=10); r += 1
         ttk.Label(f, text="Look up games without a cover or description:").grid(row=r, column=0, columnspan=3, sticky="w"); r += 1
@@ -508,7 +510,7 @@ class ArtworkDialog(tk.Toplevel):
             row=r, column=0, columnspan=3, sticky="w"); r += 1
         self.progress = ttk.Progressbar(f, maximum=100)
         self.progress.grid(row=r, column=0, columnspan=3, sticky="ew", pady=(10, 2)); r += 1
-        self.status = ttk.Label(f, text=app.scrape_status or "", foreground="#555", wraplength=560)
+        self.status = ttk.Label(f, text=app.scrape_status or "", foreground=apptheme.DIM, wraplength=560)
         self.status.grid(row=r, column=0, columnspan=3, sticky="w"); r += 1
         btns = ttk.Frame(f)
         btns.grid(row=r, column=0, columnspan=3, sticky="e", pady=(10, 0))
@@ -532,17 +534,17 @@ class ArtworkDialog(tk.Toplevel):
 
     def test(self):
         creds = self._creds()
-        self.test_label.config(text="Testing…", foreground="#555")
+        self.test_label.config(text="Testing…", foreground=apptheme.DIM)
 
         def work():
             src = M.ScreenScraperSource(creds)
             if not src.available:
-                msg, color = "Enter all four: your username and password, and the developer ID and password.", "#e65100"
+                msg, color = "Enter all four: your username and password, and the developer ID and password.", apptheme.STATUS["partial"]
             else:
                 try:
-                    msg, color = src.check_login(), "#2e7d32"
+                    msg, color = src.check_login(), apptheme.STATUS["here"]
                 except M.SourceUnavailable as ex:
-                    msg, color = str(ex), "#c62828"
+                    msg, color = str(ex), apptheme.STATUS["failed"]
             self.app.events.put(("call", lambda: self.winfo_exists() and self.test_label.config(text=msg, foreground=color)))
         threading.Thread(target=work, daemon=True).start()
 
@@ -605,7 +607,7 @@ class MatchDialog(tk.Toplevel):
         self.tv.column("year", width=70)
         self.tv.pack(fill="both", expand=True)
         self.tv.bind("<Double-1>", lambda ev: self.use())
-        self.msg = ttk.Label(f, text="", foreground="#555")
+        self.msg = ttk.Label(f, text="", foreground=apptheme.DIM)
         self.msg.pack(anchor="w", pady=4)
         b = ttk.Frame(f)
         b.pack(fill="x")

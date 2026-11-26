@@ -1,4 +1,5 @@
-"""steamshortcut.py - put Emulator Save Manager in the Steam library (Game Mode) with artwork.
+"""steamshortcut.py - put Emulator Save Manager and the ROM Library in the Steam library (Game Mode),
+each with its own artwork.
 
 Steam keeps non-Steam shortcuts in userdata/<account>/config/shortcuts.vdf (binary VDF) and the
 library artwork in userdata/<account>/config/grid/<id>*.png.  Steam reads that file at start-up
@@ -6,8 +7,11 @@ and writes it back on exit, so it must be closed while the file is changed (add/
 first and start it again when asked to).  Linux / Steam Deck.  Never touches other shortcuts;
 shortcuts.vdf is backed up before every change.
 
-    EmuSaveManager --add-to-steam [--yes]      add or update the shortcut and its artwork
+    EmuSaveManager --add-to-steam [--yes]      add or update both shortcuts and their artwork
     EmuSaveManager --remove-from-steam [--yes]
+
+The ROM Library is the same program started with --rom-library; its shortcut is told apart by
+that launch option (or its name).
 """
 
 import binascii
@@ -22,6 +26,9 @@ import time
 from pathlib import Path
 
 APP_NAME = "Emulator Save Manager"
+LIBRARY_NAME = "ROM Library"
+# app key -> (name in Steam, launch options, artwork subfolder)
+APPS = {"saves": (APP_NAME, "", ""), "library": (LIBRARY_NAME, "--rom-library", "library")}
 ART_FILES = {"capsule.png": "p.png",       # portrait library capsule 600x900
              "wide.png": ".png",           # wide capsule 920x430
              "hero.png": "_hero.png",      # banner on the game page 1920x620
@@ -184,19 +191,30 @@ def start_steam(log=print):
 
 
 # ---- the shortcut ------------------------------------------------------------------------------
-def art_dir() -> Path:
-    """Artwork shipped with the app (PyInstaller --add-data packaging/art:art), else the sources."""
+def art_dir(app: str = "saves") -> Path:
+    """Artwork shipped with the app (PyInstaller --add-data packaging/art:art), else the sources;
+    the ROM Library's is in its library/ subfolder."""
+    sub = APPS[app][2]
     base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
     for p in (base / "art", Path(__file__).resolve().parent / "packaging" / "art"):
-        if (p / "capsule.png").is_file():
-            return p
-    return base / "art"
+        if (p / sub / "capsule.png").is_file():
+            return p / sub
+    return base / "art" / sub
 
 
-def _is_ours(entry) -> bool:
+def _is_ours(entry, app: str = "saves") -> bool:
+    """A shortcut that starts this program as the given app (however it was added)."""
+    name = _get(entry, "AppName", "") or ""
+    if name == APPS[app][0]:
+        return True
+    if any(name == other[0] for k, other in APPS.items() if k != app):
+        return False
     exe = str(_get(entry, "Exe", "") or "").strip().strip('"')
-    name = exe.replace("\\", "/").rsplit("/", 1)[-1]
-    return _get(entry, "AppName", "") == APP_NAME or name in ("EmuSaveManager", "EmuSaveManager.exe")
+    exe_name = exe.replace("\\", "/").rsplit("/", 1)[-1]
+    if exe_name not in ("EmuSaveManager", "EmuSaveManager.exe"):
+        return False
+    is_library = "--rom-library" in str(_get(entry, "LaunchOptions", "") or "")
+    return is_library == (app == "library")
 
 
 # ---- artwork --------------------------------------------------------------------------------
@@ -262,7 +280,7 @@ def _put_art(grid: Path, sid: int, art: Path, state: dict, force_names=()) -> li
     return written
 
 
-def find_ours(config_dirs=None):
+def find_ours(config_dirs=None, app: str = "saves"):
     """[(config dir, shortcut id, entry)] for every shortcut that starts this app, however it was added."""
     out = []
     for cfg in (config_dirs if config_dirs is not None else user_dirs()):
@@ -272,7 +290,7 @@ def find_ours(config_dirs=None):
         except (OSError, VdfError):
             continue
         for _t, _k, e in _get(root, "shortcuts") or []:
-            if isinstance(e, list) and _is_ours(e):
+            if isinstance(e, list) and _is_ours(e, app):
                 sid = struct.unpack("<I", struct.pack("<i", _get(e, "appid") or 0))[0]
                 if not sid:
                     sid = shortcut_id(str(_get(e, "Exe", "")), str(_get(e, "AppName", "")))
@@ -280,25 +298,30 @@ def find_ours(config_dirs=None):
     return out
 
 
-def refresh_art(config_dirs=None, art=None) -> list:
-    """Give every shortcut of this app (added by us, by hand in Steam or by another tool) its
-    artwork, without touching shortcuts.vdf: safe while Steam (and Game Mode) is running; Steam
-    shows new pictures after it restarts. Returns the files written."""
-    art = Path(art or art_dir())
+def refresh_art(config_dirs=None, art=None, apps=None) -> list:
+    """Give every shortcut of the Save Manager and the ROM Library (added by us, by hand in Steam
+    or by another tool) its own artwork, without touching shortcuts.vdf: safe while Steam (and
+    Game Mode) is running; Steam shows new pictures after it restarts. Returns the files written.
+    art overrides the artwork folder (then only the Save Manager's shortcuts, unless apps says)."""
+    if apps is None:
+        apps = ("saves",) if art else tuple(APPS)
     state = _load_state()
     written = []
-    for cfg, sid, _e in find_ours(config_dirs):
-        try:
-            written += _put_art(cfg / "grid", sid, art, state)
-        except OSError:
-            continue
+    for app in apps:
+        folder = Path(art or art_dir(app))
+        for cfg, sid, _e in find_ours(config_dirs, app):
+            try:
+                written += _put_art(cfg / "grid", sid, folder, state)
+            except OSError:
+                continue
     _save_state(state)
     return written
 
 
-def add(exe: str, start_dir: str, art=None, config_dirs=None, log=print) -> int:
-    """Add or update the shortcut in every Steam account on this device.  Returns how many."""
-    art = Path(art or art_dir())
+def add(exe: str, start_dir: str, art=None, config_dirs=None, log=print, app: str = "saves") -> int:
+    """Add or update the app's shortcut in every Steam account on this device.  Returns how many."""
+    name, launch, _sub = APPS[app]
+    art = Path(art or art_dir(app))
     exe_q = f'"{exe}"'
     done = 0
     for cfg in (config_dirs if config_dirs is not None else user_dirs()):
@@ -314,25 +337,25 @@ def add(exe: str, start_dir: str, art=None, config_dirs=None, log=print) -> int:
         if shortcuts is None:
             shortcuts = []
             root.append((0x00, "shortcuts", shortcuts))
-        entry = next((v for _t, _k, v in shortcuts if isinstance(v, list) and _is_ours(v)), None)
+        entry = next((v for _t, _k, v in shortcuts if isinstance(v, list) and _is_ours(v, app)), None)
         if entry is None:
             entry = []
             shortcuts.append((0x00, str(len(shortcuts)), entry))
-            sid = shortcut_id(exe_q, APP_NAME)
+            sid = shortcut_id(exe_q, name)
             _set(entry, 0x02, "appid", struct.unpack("<i", struct.pack("<I", sid))[0])
-            log(f"Adding '{APP_NAME}' to Steam ({cfg.parent.name}).")
+            log(f"Adding '{name}' to Steam ({cfg.parent.name}).")
         else:
-            sid = struct.unpack("<I", struct.pack("<i", _get(entry, "appid") or 0))[0] or shortcut_id(exe_q, APP_NAME)
+            sid = struct.unpack("<I", struct.pack("<i", _get(entry, "appid") or 0))[0] or shortcut_id(exe_q, name)
             if not _get(entry, "appid"):
                 _set(entry, 0x02, "appid", struct.unpack("<i", struct.pack("<I", sid))[0])
-            log(f"Updating the existing '{APP_NAME}' shortcut in Steam ({cfg.parent.name}).")
+            log(f"Updating the existing '{name}' shortcut in Steam ({cfg.parent.name}).")
         grid = cfg / "grid"
         state = _load_state()
         _put_art(grid, sid, art, state, force_names=("_icon.png",))
         _save_state(state)
-        fields = [(0x01, "AppName", APP_NAME), (0x01, "Exe", exe_q), (0x01, "StartDir", f'"{start_dir}"'),
+        fields = [(0x01, "AppName", name), (0x01, "Exe", exe_q), (0x01, "StartDir", f'"{start_dir}"'),
                   (0x01, "icon", str(grid / f"{sid}_icon.png")), (0x01, "ShortcutPath", ""),
-                  (0x01, "LaunchOptions", ""), (0x02, "IsHidden", 0), (0x02, "AllowDesktopConfig", 1),
+                  (0x01, "LaunchOptions", launch), (0x02, "IsHidden", 0), (0x02, "AllowDesktopConfig", 1),
                   (0x02, "AllowOverlay", 1), (0x02, "OpenVR", 0), (0x02, "Devkit", 0),
                   (0x01, "DevkitGameID", ""), (0x02, "DevkitOverrideAppID", 0), (0x02, "LastPlayTime", 0),
                   (0x01, "FlatpakAppID", "")]
@@ -350,7 +373,11 @@ def add(exe: str, start_dir: str, art=None, config_dirs=None, log=print) -> int:
     return done
 
 
-def remove(config_dirs=None, log=print) -> int:
+def remove(config_dirs=None, log=print, apps=None) -> int:
+    apps = tuple(apps or APPS)
+
+    def ours(v):
+        return isinstance(v, list) and any(_is_ours(v, a) for a in apps)
     done = 0
     for cfg in (config_dirs if config_dirs is not None else user_dirs()):
         vdf = Path(cfg) / "shortcuts.vdf"
@@ -359,18 +386,18 @@ def remove(config_dirs=None, log=print) -> int:
         data = vdf.read_bytes()
         root = loads(data)
         shortcuts = _get(root, "shortcuts") or []
-        ours = [v for _t, _k, v in shortcuts if isinstance(v, list) and _is_ours(v)]
-        if not ours:
+        mine = [v for _t, _k, v in shortcuts if ours(v)]
+        if not mine:
             continue
         vdf.with_name(f"shortcuts.vdf.esm-backup-{time.strftime('%Y%m%d-%H%M%S')}").write_bytes(data)
-        for e in ours:
+        for e in mine:
             sid = struct.unpack("<I", struct.pack("<i", _get(e, "appid") or 0))[0]
             for suffix in ART_FILES.values():
                 try:
                     (Path(cfg) / "grid" / f"{sid}{suffix}").unlink()
                 except OSError:
                     pass
-        kept = [v for _t, _k, v in shortcuts if not (isinstance(v, list) and _is_ours(v))]
+        kept = [v for _t, _k, v in shortcuts if not ours(v)]
         new = [(0x00, str(i), v) for i, v in enumerate(kept)]     # Steam numbers them 0, 1, 2…
         for i, (t, k, v) in enumerate(root):
             if k.lower() == "shortcuts":
@@ -378,7 +405,7 @@ def remove(config_dirs=None, log=print) -> int:
         tmp = vdf.with_suffix(".vdf.esm_tmp")
         tmp.write_bytes(dumps(root))
         os.replace(tmp, vdf)
-        log(f"Removed '{APP_NAME}' from Steam ({Path(cfg).parent.name}).")
+        log(f"Removed {' and '.join(repr(_get(e, 'AppName', '')) for e in mine)} from Steam ({Path(cfg).parent.name}).")
         done += 1
     return done
 
@@ -411,7 +438,9 @@ def cli(action: str, assume_yes=False, exe=None, log=print) -> int:
         if action == "add":
             exe = exe or sys.executable
             n = add(exe, str(Path(exe).parent), log=log)
-            log(f"Done: it's in your Steam library ({n} account(s)) - look under Non-Steam in Game Mode.")
+            add(exe, str(Path(exe).parent), log=log, app="library")
+            log(f"Done: the Save Manager and the ROM Library are in your Steam library ({n} account(s)) - "
+                "look under Non-Steam in Game Mode.")
         else:
             n = remove(log=log)
             log("Done." if n else "It wasn't in Steam.")

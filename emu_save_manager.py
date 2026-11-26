@@ -31,6 +31,7 @@ import queue
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import tkinter as tk
 import tkinter.font as tkfont
@@ -366,6 +367,19 @@ def is_within(child, parent):
         Path(os.path.abspath(child)).relative_to(Path(os.path.abspath(parent)))
         return True
     except ValueError:
+        return False
+
+
+def launch_library(*args) -> bool:
+    """Start the ROM Library (this program with --rom-library) in its own process."""
+    if getattr(sys, "frozen", False):
+        cmd = [sys.executable, "--rom-library", *args]
+    else:
+        cmd = [sys.executable, str(Path(__file__).resolve()), "--rom-library", *args]
+    try:
+        subprocess.Popen(cmd, close_fds=True)
+        return True
+    except OSError:
         return False
 
 
@@ -1110,8 +1124,12 @@ class App(tk.Tk):
         GCCardDialog(self, self.current if self.current in ("Dolphin", "PrimeHack") else "Dolphin")
 
     def open_bios_vault(self):
-        from ui_biosvault import BiosVaultDialog
-        BiosVaultDialog(self)
+        """The BIOS Vault now lives in the ROM Library: open it there (same settings)."""
+        if not launch_library("--bios"):
+            from ui_biosvault import BiosVaultDialog          # couldn't start it: open it here
+            BiosVaultDialog(self)
+        else:
+            self.set_status("Opening the BIOS Vault in the ROM Library…")
 
     def open_cloud(self):
         from ui_cloud import CloudSyncDialog

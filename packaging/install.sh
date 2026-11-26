@@ -24,7 +24,7 @@ if [ "${1:-}" = "--remove" ]; then
   systemctl --user daemon-reload >/dev/null 2>&1 || true
   rm -rf "$DEST" "$DESKTOP" "$LIBDESKTOP" "$HOME/.local/bin/emu-save-manager" "$HOME/.local/bin/rom-library" \
          "$HOME/Desktop/Emulator Save Manager.desktop" "$HOME/Desktop/ROM Library.desktop"
-  for s in $SIZES; do rm -f "$ICONS/${s}x${s}/apps/emu-save-manager.png"; done
+  for s in $SIZES; do rm -f "$ICONS/${s}x${s}/apps/emu-save-manager.png" "$ICONS/${s}x${s}/apps/rom-library.png"; done
   command -v update-desktop-database >/dev/null && update-desktop-database "$APPS" || true
   echo "Removed. Settings/backups remain in ~/.emu_save_manager (ROM Library settings in ~/.emu_rom_library)"
   exit 0
@@ -50,6 +50,13 @@ if [ -n "$ART" ]; then
   command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -q -t "$ICONS" 2>/dev/null || true
   ICON="$ICONS/256x256/apps/emu-save-manager.png"      # full path: works on every desktop
 fi
+LIBICON=$ICON                                            # the ROM Library's own icon (teal)
+if [ -n "$ART" ] && [ -f "$ART/library/icon-256.png" ]; then
+  for s in $SIZES; do
+    [ -f "$ART/library/icon-$s.png" ] && cp "$ART/library/icon-$s.png" "$ICONS/${s}x${s}/apps/rom-library.png"
+  done
+  LIBICON="$ICONS/256x256/apps/rom-library.png"
+fi
 
 cat > "$DESKTOP" <<EOF
 [Desktop Entry]
@@ -68,7 +75,7 @@ Type=Application
 Name=ROM Library
 Comment=Check games out of your ROM library and back in
 Exec="$DEST/EmuSaveManager" --rom-library
-Icon=$ICON
+Icon=$LIBICON
 Terminal=false
 Categories=Game;Utility;
 EOF
@@ -89,7 +96,7 @@ if [ "${1:-}" != "--no-steam" ] && { [ -d "$HOME/.local/share/Steam/userdata" ] 
   ans=y
   if [ "${1:-}" != "--steam" ]; then
     if [ -t 0 ]; then
-      read -r -p "Add it to your Steam library so it shows in Game Mode (with artwork)? Steam closes and restarts for a moment. [Y/n] " ans || ans=n
+      read -r -p "Add the Save Manager and the ROM Library to your Steam library so they show in Game Mode (with artwork)? Steam closes and restarts for a moment. [Y/n] " ans || ans=n
     else
       ans=n
       echo "To add it to Game Mode later: $DEST/EmuSaveManager --add-to-steam"

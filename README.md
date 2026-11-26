@@ -36,7 +36,8 @@ Keep all `.py` files in this folder together and run:
 | `tools/build_bios_db.py` | regenerates `biosdb_data.py` from libretro's System.dat |
 | `autosync.py` | background two-way sync (`--sync`) and its Windows / systemd scheduling - no GUI |
 | `exitwatch.py` | sync after an emulator or ES-DE closes (`--watch`) and starting it at sign-in - no GUI |
-| `steamshortcut.py` | Steam Deck: adds the app to the Steam library (Game Mode) with artwork - no GUI |
+| `steamshortcut.py` | Steam: both apps' shortcuts (Game Mode) and their artwork - no GUI |
+| `apptheme.py` | the ROM Library's dark teal theme |
 | `syncplan.py` | decides what each sync copies: remembers the last synced state, conflicts, folder-card saves as one item - no GUI |
 | `savehistory.py` | Save History: earlier versions of synced saves, kept at every sync; restore - no GUI |
 | `ui_history.py` | Save History window |
@@ -140,7 +141,9 @@ folder, and writes a new `.hash` after uploads so EmuDeck's own CloudSync notice
 
 ## BIOS Vault
 Your own BIOS files, identified by their contents, kept in one place, synced between devices
-and installed into every emulator. The app never downloads BIOS files from anywhere except
+and installed into every emulator. It lives in the **ROM Library** (**BIOS…**); the Save Manager's
+**BIOS Vault…** button opens it there. Its settings, and its cloud sync during Cloud Sync, stay
+with the Save Manager. The app never downloads BIOS files from anywhere except
 your own cloud drive; dump them from consoles you own.
 
 - **Add files / Add folder**: files, folders and zip archives. Each file is identified by content:
@@ -309,7 +312,15 @@ timing) and its **banner**, with its two comment lines, size, date and game ID.
 A second app that comes with the save manager: keep your whole ROM collection in one place (a drive
 shared from another computer, a NAS, or any drive) and **check games out** to whichever machine you're
 playing on, then **check them in** when you're done to free the space. Open it from the Start menu or
-the application menu (**ROM Library**), or run `EmuSaveManager --rom-library`.
+the application menu (**ROM Library**), or run `EmuSaveManager --rom-library`
+(`--rom-library --bios` opens the BIOS Vault too).
+
+It has its own look so the two apps are never confused: a dark teal theme with amber highlights
+(`apptheme.py`), its own icon, and its own Steam shortcut and Game Mode artwork (a shelf of game
+cases, in `packaging/art/library/`; `python tools/make_art.py library` redraws it).
+`--add-to-steam` adds both apps; each start-up fills in any missing artwork for both shortcuts,
+including ones made with Steam's own *Add a Non-Steam Game* (the ROM Library's is recognised by
+its `--rom-library` launch option or its name).
 
 - **The library** is a folder laid out like EmuDeck's ROM folder: one folder per system (`ps2`, `gc`,
   `xbox`...), games inside. Copy your existing `Emulation/roms` folder there as it is.

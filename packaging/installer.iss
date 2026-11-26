@@ -38,8 +38,8 @@ Source: "..\dist\EmuSaveManager\*"; DestDir: "{app}"; Flags: ignoreversion recur
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
-Name: "{group}\ROM Library"; Filename: "{app}\{#AppExe}"; Parameters: "--rom-library"; Comment: "Check games out of your ROM library"
-Name: "{autodesktop}\ROM Library"; Filename: "{app}\{#AppExe}"; Parameters: "--rom-library"; Tasks: libdesktopicon
+Name: "{group}\ROM Library"; Filename: "{app}\{#AppExe}"; Parameters: "--rom-library"; IconFilename: "{app}\_internal\art\library\rom-library.ico"; Comment: "Check games out of your ROM library"
+Name: "{autodesktop}\ROM Library"; Filename: "{app}\{#AppExe}"; Parameters: "--rom-library"; IconFilename: "{app}\_internal\art\library\rom-library.ico"; Tasks: libdesktopicon
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent

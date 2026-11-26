@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import platform
+import sys
 import queue as pyqueue
 import threading
 import time
@@ -10,6 +11,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+import apptheme
 import cloudsync
 import libmeta as M
 import libqueue as Q
@@ -21,8 +23,7 @@ SYSTEM = platform.system()
 ALL = "__all__"
 FILTERS = ("All games", "On this machine", "Not on this machine", "Checked out elsewhere", "Favourites",
            "Only on this machine")
-COLORS = {"here": "#2e7d32", "partial": "#e65100", "local_only": "#1565c0", "elsewhere": "#6d6d6d",
-          "busy": "#6a1b9a", "failed": "#c62828"}
+COLORS = dict(apptheme.STATUS)        # readable on the ROM Library's dark theme
 
 
 def fmt_eta(sec):
@@ -73,6 +74,30 @@ class TouchScroll:
         return bool(self.d and self.d["moved"])
 
 
+class SaveManagerLink:
+    """What the BIOS Vault needs from the Emulator Save Manager - its settings (the vault and its
+    cloud sync live there), the emulators' folders and the backup folder - without its window."""
+
+    def __init__(self):
+        import autosync
+        self.cfg, self.profiles, self._resolve = autosync.load_app()
+
+    @property
+    def backup_dir(self):
+        return Path(self.cfg["backup_dir"])
+
+    def resolve(self, emu):
+        return self._resolve(emu)
+
+    def save_cfg(self):
+        import emu_save_manager as esm
+        esm.save_config(self.cfg)
+
+    def open_folder(self, path):
+        import emu_save_manager as esm
+        esm.open_folder(path)
+
+
 class LibraryApp(tk.Tk):
     def __init__(self, cfg=None, autostart=True):
         super().__init__()
@@ -87,6 +112,7 @@ class LibraryApp(tk.Tk):
                 self.attributes("-zoomed", True)
             except tk.TclError:
                 pass
+        apptheme.apply_library(self)
         self._set_icon()
         self.lib = None
         self.q = None
@@ -109,11 +135,32 @@ class LibraryApp(tk.Tk):
         self.after(200, self._poll)
         if autostart:
             self.after(100, self.start_library)
+            self.after(1500, self._steam_art)
+
+    def _steam_art(self):
+        """Give the Steam shortcuts (this one and the Save Manager's) their artwork."""
+        try:
+            import steamshortcut
+            if steamshortcut.refresh_art():
+                self.set_status("Added the ROM Library's artwork to its Steam shortcut "
+                                "(it shows in the library after Steam restarts).")
+        except Exception:  # noqa - artwork must never get in the way
+            pass
+
+    def open_bios(self):
+        """The BIOS Vault (moved here from the Save Manager; its settings stay in the Save Manager's)."""
+        try:
+            link = SaveManagerLink()
+        except Exception as ex:  # noqa
+            messagebox.showerror("BIOS", f"Couldn't read the Save Manager's settings: {ex}", parent=self)
+            return None
+        from ui_biosvault import BiosVaultDialog
+        return BiosVaultDialog(link, master=self)
 
     def _set_icon(self):
         try:
             import steamshortcut
-            art = steamshortcut.art_dir()
+            art = steamshortcut.art_dir("library")
             self._icons = [tk.PhotoImage(file=str(art / f"icon-{n}.png")) for n in (256, 64, 32, 16)
                            if (art / f"icon-{n}.png").is_file()]
             if self._icons:
@@ -133,9 +180,10 @@ class LibraryApp(tk.Tk):
         top = ttk.Frame(self, padding=(10, 8, 10, 4))
         top.pack(fill="x")
         ttk.Label(top, text="Library:").pack(side="left")
-        self.loc_label = ttk.Label(top, text="(not set)", foreground="#444")
+        self.loc_label = ttk.Label(top, text="(not set)", foreground=apptheme.DIM)
         self.loc_label.pack(side="left", padx=(4, 12))
         ttk.Button(top, text="Settings…", command=self.open_settings).pack(side="right")
+        ttk.Button(top, text="BIOS…", command=self.open_bios).pack(side="right", padx=(0, 8))
         ttk.Button(top, text="Artwork…", command=self.open_artwork).pack(side="right", padx=(0, 8))
         self.refresh_btn = ttk.Button(top, text="Refresh", command=self.refresh)
         self.refresh_btn.pack(side="right", padx=(0, 8))
@@ -157,7 +205,7 @@ class LibraryApp(tk.Tk):
         for val, text in (("covers", "Covers"), ("list", "List")):
             ttk.Radiobutton(bar, text=text, value=val, variable=self.v_view, style="Toolbutton",
                             command=lambda: self.set_view(self.v_view.get())).pack(side="left")
-        self.count_label = ttk.Label(bar, text="", foreground="#555")
+        self.count_label = ttk.Label(bar, text="", foreground=apptheme.DIM)
         self.count_label.pack(side="right")
 
         pane = ttk.PanedWindow(self, orient="horizontal")
@@ -215,7 +263,7 @@ class LibraryApp(tk.Tk):
         self.btn_info = ttk.Button(act, text="Details…", command=self.show_details)
         for b in (self.btn_out, self.btn_in, self.btn_add, self.btn_fav, self.btn_info):
             b.pack(side="left", padx=(0, 8))
-        self.sel_label = ttk.Label(act, text="", foreground="#555")
+        self.sel_label = ttk.Label(act, text="", foreground=apptheme.DIM)
         self.sel_label.pack(side="left", padx=8)
 
         tf = ttk.LabelFrame(self, text="Transfers", padding=6)
@@ -250,7 +298,7 @@ class LibraryApp(tk.Tk):
         self.space_bar.pack(side="left")
         self.space_label = ttk.Label(bottom, text="")
         self.space_label.pack(side="left", padx=8)
-        self.status = ttk.Label(bottom, text="", foreground="#555")
+        self.status = ttk.Label(bottom, text="", foreground=apptheme.DIM)
         self.status.pack(side="right")
         self._update_selection()
         self._arrange()
@@ -877,7 +925,7 @@ class DetailsDialog(tk.Toplevel):
         if other:
             lines.append(("Also checked out on", ", ".join(other)))
         for i, (a, b) in enumerate(lines):
-            ttk.Label(f, text=a + ":", foreground="#555").grid(row=i, column=0, sticky="nw", padx=(0, 8))
+            ttk.Label(f, text=a + ":", foreground=apptheme.DIM).grid(row=i, column=0, sticky="nw", padx=(0, 8))
             ttk.Label(f, text=b, wraplength=600).grid(row=i, column=1, sticky="w")
         tv = ttk.Treeview(f, columns=("file", "size", "here"), show="headings", height=8)
         for c, t, w in (("file", "File", 470), ("size", "Size", 100), ("here", "Here", 120)):
@@ -945,11 +993,11 @@ class SettingsDialog(tk.Toplevel):
             ttk.Label(self.share_box, text=label).grid(row=i, column=0, sticky="w", pady=1)
             ttk.Entry(self.share_box, textvariable=var, width=30,
                       show="•" if var is self.v_pass else "").grid(row=i, column=1, sticky="w", padx=6)
-            ttk.Label(self.share_box, text=hint, foreground="#666").grid(row=i, column=2, sticky="w")
+            ttk.Label(self.share_box, text=hint, foreground=apptheme.DIM).grid(row=i, column=2, sticky="w")
         tb = ttk.Frame(f)
         tb.grid(row=r, column=0, columnspan=3, sticky="w", pady=(6, 0)); r += 1
         ttk.Button(tb, text="Test", command=self.test).pack(side="left")
-        self.test_label = ttk.Label(tb, text="", foreground="#555", wraplength=620)
+        self.test_label = ttk.Label(tb, text="", foreground=apptheme.DIM, wraplength=620)
         self.test_label.pack(side="left", padx=8)
 
         ttk.Separator(f).grid(row=r, column=0, columnspan=3, sticky="ew", pady=10); r += 1
@@ -957,16 +1005,16 @@ class SettingsDialog(tk.Toplevel):
         ttk.Entry(f, textvariable=self.v_local).grid(row=r, column=1, sticky="ew", padx=6)
         ttk.Button(f, text="Browse…", command=lambda: self._browse(self.v_local)).grid(row=r, column=2); r += 1
         ttk.Label(f, text="Games are checked out here. EmuDeck's is Emulation/roms; ES-DE and Steam ROM "
-                  "Manager find them there.", foreground="#666").grid(row=r, column=1, columnspan=2, sticky="w"); r += 1
+                  "Manager find them there.", foreground=apptheme.DIM).grid(row=r, column=1, columnspan=2, sticky="w"); r += 1
         ttk.Label(f, text="This machine's name:").grid(row=r, column=0, sticky="w", pady=(6, 0))
         ttk.Entry(f, textvariable=self.v_label, width=30).grid(row=r, column=1, sticky="w", padx=6, pady=(6, 0)); r += 1
-        ttk.Label(f, text="Shown to your other machines, e.g. \"On Steam Deck\".", foreground="#666").grid(
+        ttk.Label(f, text="Shown to your other machines, e.g. \"On Steam Deck\".", foreground=apptheme.DIM).grid(
             row=r, column=1, columnspan=2, sticky="w"); r += 1
         ttk.Label(f, text="rclone:").grid(row=r, column=0, sticky="w", pady=(6, 0))
         ttk.Entry(f, textvariable=self.v_rclone).grid(row=r, column=1, sticky="ew", padx=6, pady=(6, 0))
         ttk.Button(f, text="Download", command=self.download_rclone).grid(row=r, column=2, pady=(6, 0)); r += 1
         ttk.Label(f, text="rclone does the copying (the same one the Emulator Save Manager uses).",
-                  foreground="#666").grid(row=r, column=1, columnspan=2, sticky="w"); r += 1
+                  foreground=apptheme.DIM).grid(row=r, column=1, columnspan=2, sticky="w"); r += 1
 
         btns = ttk.Frame(f)
         btns.grid(row=r, column=0, columnspan=3, sticky="e", pady=(12, 0))
@@ -1015,7 +1063,7 @@ class SettingsDialog(tk.Toplevel):
         return L.setup_share(runner, form["host"], form["share"], form["sub"], form["user"], form["password"])
 
     def test(self):
-        self.test_label.config(text="Testing…", foreground="#555")
+        self.test_label.config(text="Testing…", foreground=apptheme.DIM)
         form = self._form()
 
         def work():
@@ -1084,6 +1132,8 @@ class SettingsDialog(tk.Toplevel):
 
 def main():
     app = LibraryApp()
+    if "--bios" in sys.argv:                 # opened from the Save Manager's BIOS button
+        app.after(300, app.open_bios)
     app.mainloop()
 
 

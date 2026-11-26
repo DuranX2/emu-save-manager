@@ -17,7 +17,7 @@ printf '%s' "${APP_VER:-0.0.0}" > build/app_version.txt
 pyinstaller --noconfirm --clean --windowed --name EmuSaveManager --add-data "packaging/art:art" \
   --add-data "build/app_version.txt:." \
   --hidden-import ps2mc --hidden-import ps2folder --hidden-import cloudsync --hidden-import autosync --hidden-import exitwatch --hidden-import biosdb --hidden-import biosdb_data --hidden-import biosvault --hidden-import biostargets --hidden-import ui_biosvault \
-  --hidden-import ui_ps2cards --hidden-import ui_cloud --hidden-import savehistory --hidden-import ui_history --hidden-import syncplan --hidden-import steamshortcut --hidden-import romlibrary --hidden-import libqueue --hidden-import ui_library --hidden-import libmeta --hidden-import ui_covers --hidden-import updater --hidden-import ui_update --hidden-import saveinfo --hidden-import titledb --hidden-import ui_saves --hidden-import ps2icon --hidden-import gamepad --hidden-import ui_ps2console --hidden-import ui_console --hidden-import gcfolder --hidden-import ui_gccards --hidden-import ps1card --hidden-import ui_ps1cards --hidden-import wiinand --hidden-import ui_wiisaves --hidden-import safecopy --hidden-import pspsaves --hidden-import ui_pspsaves --hidden-import rasaves --hidden-import raconvert --hidden-import ui_rasaves --hidden-import PIL.Image --hidden-import PIL.PngImagePlugin --hidden-import PIL.JpegImagePlugin \
+  --hidden-import ui_ps2cards --hidden-import ui_cloud --hidden-import savehistory --hidden-import ui_history --hidden-import syncplan --hidden-import steamshortcut --hidden-import romlibrary --hidden-import libqueue --hidden-import ui_library --hidden-import libmeta --hidden-import ui_covers --hidden-import updater --hidden-import ui_update --hidden-import saveinfo --hidden-import titledb --hidden-import ui_saves --hidden-import ps2icon --hidden-import gamepad --hidden-import ui_ps2console --hidden-import ui_console --hidden-import gcfolder --hidden-import ui_gccards --hidden-import ps1card --hidden-import ui_ps1cards --hidden-import wiinand --hidden-import ui_wiisaves --hidden-import safecopy --hidden-import pspsaves --hidden-import ui_pspsaves --hidden-import rasaves --hidden-import raconvert --hidden-import ui_rasaves --hidden-import apptheme --hidden-import PIL.Image --hidden-import PIL.PngImagePlugin --hidden-import PIL.JpegImagePlugin \
   emu_save_manager.py
 
 PKG=dist/EmuSaveManager-linux
@@ -25,7 +25,8 @@ rm -rf "$PKG"; mkdir -p "$PKG"
 cp -r dist/EmuSaveManager "$PKG/app"
 cp packaging/install.sh "$PKG/install.sh"
 # the icon and Steam artwork must be in the package (install.sh and --add-to-steam use them)
-for f in capsule.png wide.png hero.png logo.png icon-256.png icon-16.png; do
+for f in capsule.png wide.png hero.png logo.png icon-256.png icon-16.png \
+         library/capsule.png library/wide.png library/hero.png library/logo.png library/icon-256.png; do
   [ -f "$PKG/app/_internal/art/$f" ] || { echo "Missing artwork in the package: $f"; exit 1; }
 done
 echo "Artwork bundled: $(ls "$PKG/app/_internal/art" | tr '\n' ' ')"
