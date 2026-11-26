@@ -66,7 +66,7 @@ def badge(s):
 
 
 # 1. the systems list shows each system's BIOS
-assert badge("psx") == "In vault" and badge("ps2") == "⚠ Missing" and badge("snes") == "", \
+assert badge("psx") == "↓" and badge("ps2") == "⚠" and badge("snes") == "", \
     (badge("psx"), badge("ps2"), badge("snes"))
 assert "bios_missing" in app.sys_tree.item("ps2", "tags")
 print("1. BIOS column:", {s: badge(s) for s in ("psx", "ps2", "snes")})
@@ -91,7 +91,7 @@ print("3. checkout copied the BIOS:", sorted(p.name for p in emu_bios.iterdir())
 # 4. with the setting off, nothing is copied
 (emu_bios / "scph5501.bin").unlink()
 app.cfg["bios_on_checkout"] = False
-app.load_bios(); assert wait(app, lambda: badge("psx") == "In vault" and not app._bios_loading)
+app.load_bios(); assert wait(app, lambda: badge("psx") == "↓" and not app._bios_loading)
 app.sys_tree.selection_set(U.ALL); pump(app, 0.3)
 app.tree.selection_set(["psx/Racer (USA).chd"]); pump(app, 0.2)
 app.check_out()

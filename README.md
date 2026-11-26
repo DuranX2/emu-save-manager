@@ -28,6 +28,7 @@ Keep all `.py` files in this folder together and run:
 | `ui_ps2console.py` | the PS2 Card Manager's console view (controller-friendly, 3D save icons) |
 | `ps2icon.py` | PS2 save icons: `icon.sys`, the 3D icon format, and a Pillow renderer - no GUI |
 | `gamepad.py` | controller (XInput / Linux joystick) and keyboard navigation for Tk windows |
+| `mainpad.py` | controller navigation for the main window, its questions and other windows (Y opens an action menu) |
 | `cloudsync.py` | rclone wrapper using EmuDeck's folder layout, incl. EmuDeck Cloud - no GUI |
 | `ui_cloud.py` | Cloud Sync window |
 | `biosdb.py`, `biosdb_data.py` | identify BIOS files by content (PS2 version record, libretro fingerprints) - no GUI |
@@ -38,9 +39,12 @@ Keep all `.py` files in this folder together and run:
 | `exitwatch.py` | sync after an emulator or ES-DE closes (`--watch`) and starting it at sign-in - no GUI |
 | `steamshortcut.py` | Steam: both apps' shortcuts (Game Mode) and their artwork - no GUI |
 | `apptheme.py` | the ROM Library's dark teal theme |
+| `libcheck.py`, `ui_libcheck.py` | the ROM Library's Check-up: entries that aren't games, duplicates, formats to convert, Wii U .wua (report only) |
+| `libbios.py` | BIOS status per Library system from the BIOS Vault; copies a system's BIOS in when a game is checked out |
 | `netssl.py` | one TLS setup for every web request: certificates checked against the system's list plus Mozilla's (certifi) |
 | `syncplan.py` | decides what each sync copies: remembers the last synced state, conflicts, folder-card saves as one item - no GUI |
 | `savehistory.py` | Save History: earlier versions of synced saves, kept at every sync; restore - no GUI |
+| `savenames.py` | game names for save files in Save History, the Conflicts list and the sync log |
 | `ui_history.py` | Save History window |
 | `saveinfo.py` | works out which game and which save each file belongs to (GameCube/Wii/PSP/PS3/PS1 metadata and icons, state file names, title-ID folders) - no GUI |
 | `titledb.py` | game names for IDs from the emulators' own lists, Cemu's title cache and ROM headers - no GUI |

@@ -53,13 +53,15 @@ class SystemBios:
                                     # 'missing' (not in the vault), 'no_emulator'
 
     def badge(self) -> str:
-        """Short, for the systems list (selecting the system shows text())."""
+        """One symbol for the systems list (selecting the system shows text()):
+        ✔ installed here · ↓ in the vault (copied in at checkout) · ⚠ needed, not in the vault ·
+        – optional, not in the vault · nothing: no BIOS needed."""
         if self.state == "ok":
             return "✔"
         if self.state in ("copy", "no_emulator"):
-            return "In vault"
+            return "↓"
         if self.state == "missing":
-            return "⚠ Missing" if self.need == "required" else "–"
+            return "⚠" if self.need == "required" else "–"
         return ""
 
     def text(self, system_name: str) -> str:

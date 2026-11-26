@@ -623,11 +623,32 @@ class App(tk.Tk):
         self.titles = None
         self._build_ui()
         self.refresh_emulator_list()
+        self.pad = None
+        self._start_controller()
         self.after(100, self._poll)
         self._start_titles()
         self._start_updates()
         self.after(2500, self._ensure_watcher)
         self.after(1500, self._steam_art)
+
+    def _start_controller(self):
+        """Controller navigation in this window (and its questions). Off with "controller": false."""
+        if not self.cfg.get("controller", True):
+            return
+        try:
+            import mainpad
+            self.pad = mainpad.MainPad(self)
+        except Exception as ex:  # noqa - a controller problem must never stop the app
+            print("Controller:", ex)
+            self.pad = None
+            return
+        self.pad.watch_hint(self.pad_hint)
+
+    def destroy(self):
+        if getattr(self, "pad", None):
+            self.pad.stop()
+            self.pad = None
+        super().destroy()
 
     def _steam_art(self):
         """Give this app's Steam shortcut (however it was added) its library artwork."""
@@ -800,6 +821,7 @@ class App(tk.Tk):
         bottom.pack(fill="x", side="bottom", before=panes)
         self.status = ttk.Label(bottom, text="Ready")
         self.status.pack(side="left")
+        self.pad_hint = ttk.Label(bottom, text="", foreground="#1f5fa8")   # shown with a controller
         self.progress = ttk.Progressbar(bottom, length=260, maximum=100)
         self.progress.pack(side="right")
         ttk.Button(bottom, text="Updates…", command=self.open_updates).pack(side="right", padx=(0, 10))
@@ -1133,7 +1155,11 @@ class App(tk.Tk):
 
     def open_cloud(self):
         from ui_cloud import CloudSyncDialog
-        CloudSyncDialog(self)
+        return CloudSyncDialog(self)
+
+    def open_library(self):
+        if launch_library():
+            self.set_status("Opening the ROM Library…")
 
     def open_history(self):
         from ui_history import SaveHistoryDialog

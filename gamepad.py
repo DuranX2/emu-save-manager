@@ -20,6 +20,7 @@ import os
 import struct
 import sys
 import time
+import weakref
 
 ACTIONS = ("up", "down", "left", "right", "ok", "back", "mark", "menu", "prev", "next", "view")
 REPEATING = {"up", "down", "left", "right"}
@@ -104,6 +105,7 @@ class XInputBackend:
             raise OSError("XInput isn't available")
         self.state = _XInputState()
         self.missing = {}            # pad -> next time to look again (absent pads are slow to query)
+        self.seen = set()            # pads that answered the last time they were asked
 
     def poll(self) -> set:
         held = set()
@@ -113,10 +115,15 @@ class XInputBackend:
                 continue
             if self.dll.XInputGetState(pad, ctypes.byref(self.state)) != 0:
                 self.missing[pad] = now + 2.0
+                self.seen.discard(pad)
                 continue
+            self.seen.add(pad)
             g = self.state.Gamepad
             held |= xinput_held(g.wButtons, g.sThumbLX, g.sThumbLY)
         return held
+
+    def present(self) -> bool:
+        return bool(self.seen)
 
     def close(self):
         pass
@@ -203,6 +210,9 @@ class JoystickBackend:
             held |= joystick_held(buttons, axes)
         return held
 
+    def present(self) -> bool:
+        return bool(self.devs)
+
     def close(self):
         for fd, *_x in self.devs.values():
             try:
@@ -230,7 +240,10 @@ class Navigator:
     """Polls a controller and listens to keys on `widget`'s window; calls callback(action).
     Only acts while the window has focus. stop() when the window goes away."""
 
+    active = weakref.WeakSet()       # running navigators, so a window-wide one can leave others alone
+
     def __init__(self, widget, callback, backend="auto", keys=True):
+        Navigator.active.add(self)
         self.widget = widget
         self.router = Router(callback)
         self.backend = default_backend() if backend == "auto" else backend
@@ -241,8 +254,9 @@ class Navigator:
         if keys:
             top = widget.winfo_toplevel()
             self._bind = top.bind("<KeyPress>", self._on_key, add="+")
+        self._after = None
         if self.backend is not None:
-            widget.after(POLL_MS, self._tick)
+            self._after = widget.after(POLL_MS, self._tick)
 
     @property
     def controller_name(self):
@@ -291,11 +305,18 @@ class Navigator:
         except Exception:  # noqa - a misbehaving pad must not break the window
             pass
         try:
-            self.widget.after(POLL_MS, self._tick)
+            self._after = self.widget.after(POLL_MS, self._tick)
         except Exception:  # noqa - window closed
             self.running = False
 
     def stop(self):
         self.running = False
+        Navigator.active.discard(self)
+        if getattr(self, "_after", None):
+            try:
+                self.widget.after_cancel(self._after)
+            except Exception:  # noqa - already gone
+                pass
+            self._after = None
         if self.backend is not None:
             self.backend.close()

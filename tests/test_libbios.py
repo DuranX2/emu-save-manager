@@ -42,7 +42,7 @@ targets = [biostargets.Target("duckstation", duck, "test"), biostargets.Target("
 # 1. statuses: not needed, missing (required/optional), in the vault but not here, damaged = missing
 st = B.status(["snes", "ps2", "gba", "psx", "saturn", "segacd"], entries, targets)
 ok(st["snes"].state == "none" and st["snes"].badge() == "" and "doesn't need" in st["snes"].text("SNES"))
-ok(st["ps2"].state == "missing" and st["ps2"].badge() == "⚠ Missing", st["ps2"])
+ok(st["ps2"].state == "missing" and st["ps2"].badge() == "⚠", st["ps2"])
 ok(st["gba"].state == "missing" and st["gba"].badge() == "–", st["gba"].badge())
 ok(st["psx"].state == "copy" and set(st["psx"].missing) == {"DuckStation", "RetroArch"}, st["psx"])
 ok("copied in when you check out" in st["psx"].text("PlayStation"), st["psx"].text("PlayStation"))

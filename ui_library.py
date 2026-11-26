@@ -294,9 +294,9 @@ class LibraryApp(tk.Tk):
         self.sys_tree.heading("name", text="System")
         self.sys_tree.heading("count", text="Games")
         self.sys_tree.heading("bios", text="BIOS")
-        self.sys_tree.column("name", width=100, minwidth=90, stretch=True)
-        self.sys_tree.column("count", width=78, anchor="e", stretch=False)
-        self.sys_tree.column("bios", width=78, anchor="w", stretch=False)
+        self.sys_tree.column("name", width=96, minwidth=80, stretch=True)
+        self.sys_tree.column("count", width=68, anchor="e", stretch=False)
+        self.sys_tree.column("bios", width=46, anchor="center", stretch=False)
         self.sys_tree.tag_configure("bios_missing", foreground=apptheme.AMBER)
         ssb = ttk.Scrollbar(left, orient="vertical", command=self.sys_tree.yview, style=sbstyle)
         self.sys_tree.configure(yscrollcommand=ssb.set)
@@ -397,7 +397,7 @@ class LibraryApp(tk.Tk):
 
     def _place_sashes(self):
         try:
-            self.pane.sashpos(0, 280 if self.compact else 310)
+            self.pane.sashpos(0, 230 if self.compact else 260)
             w = self.pane.winfo_width()
             if w > 600:
                 self.pane.sashpos(1, w - self.details_w - 20)
