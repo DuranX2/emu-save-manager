@@ -373,6 +373,10 @@ its `--rom-library` launch option or its name).
   - **Leaving systems out:** right-click a system (or **LT** on it) ▸ **Leave … out of artwork
     look-ups**, or **Artwork… ▸ Choose systems…**. "All games" then skips them; looking up that one
     system on its own (right-click ▸ **Look up artwork for …**) still works.
+- **Cover shapes:** tiles take the shape of the system's covers: square for CD systems
+  (PlayStation, Saturn, Dreamcast…), tall for DVD cases, wide for SNES and N64 boxes. The shape is
+  learned from the covers shown (built-in shapes until then). Every cover stands on the same line;
+  views with several systems use DVD-shaped tiles.
 - **Right-click menus.** A game's menu has the same actions as **A** on a controller (check out / in,
   favourite, details, artwork); a system's menu looks up its artwork, leaves it out of look-ups, and
   opens the Check-up and BIOS.

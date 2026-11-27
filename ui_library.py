@@ -126,6 +126,7 @@ class LibraryApp(tk.Tk):
         self.view = self.cfg.get("view", "covers")
         self.tile_w = 140 if self.compact else 150
         self.images = C.ImageCache(self, self.tile_w, int(self.tile_w * 1.4))
+        self.cover_shapes = C.CoverShapes(L.APP_DIR / "cover_shapes.json")
         self.scraper = None
         self.scrape_status = ""
         self.artwork_dialog = None
@@ -864,6 +865,7 @@ class LibraryApp(tk.Tk):
             if keep:
                 self.tree.selection_set(keep)
         else:
+            self.grid_view.set_shape(self.cover_shapes.for_view({lib.get(k).system for k in keys}))
             self.grid_view.set_keys(keys)
             self.grid_view.set_selection([k for k in keys if k in sel], notify=False)
         total = sum(lib.get(k).size for k in keys)
@@ -1141,6 +1143,8 @@ class LibraryApp(tk.Tk):
         self._poll_id = self.after(300, self._poll)
 
     def destroy(self):
+        if getattr(self, "cover_shapes", None):
+            self.cover_shapes.save()
         if getattr(self, "pad", None):
             self.pad.stop()
             self.pad = None

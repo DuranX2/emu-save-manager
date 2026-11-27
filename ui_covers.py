@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import queue as pyqueue
 import threading
+from pathlib import Path
+import os
+import json
 import tkinter as tk
 from collections import OrderedDict
 from tkinter import messagebox, ttk
@@ -16,6 +19,70 @@ import apptheme
 
 BADGE = {"here": ("✔", "#2e7d32"), "partial": ("◐", "#e65100"), "local_only": ("●", "#1565c0"),
          "busy": ("⬇", "#6a1b9a"), "elsewhere": ("⇄", "#6d6d6d"), "card_out": ("▣", "#8a7440")}
+
+
+# Case shapes (height / width of the cover art) until the app has seen enough of a system's covers.
+CD_CASE, DVD_CASE, WIDE_BOX = 1.0, 1.4, 0.72
+CASE_SHAPES = {
+    "psx": CD_CASE, "dreamcast": CD_CASE, "neogeocd": CD_CASE, "pcfx": CD_CASE, "atarijaguarcd": CD_CASE,
+    "megacd": CD_CASE, "segacd": CD_CASE, "saturn": CD_CASE, "3do": CD_CASE,
+    "snes": WIDE_BOX, "n64": WIDE_BOX,
+    "gb": 1.0, "gbc": 1.0, "gba": 1.0, "nds": 0.9, "n3ds": 0.9, "virtualboy": 1.0,
+    "psp": 1.7, "psvita": 1.2, "switch": 1.6, "ps3": 1.15, "ps4": 1.2,
+}
+SHAPE_MIN, SHAPE_MAX, SHAPE_LEARN = 0.6, 1.75, 6
+
+
+class CoverShapes:
+    """The usual cover shape per system: learned from the covers shown (the median, so a few odd
+    ones don't matter), else CASE_SHAPES, else a DVD case. Kept in a small file between runs."""
+
+    def __init__(self, path):
+        self.path = Path(path)
+        self.seen = {}                     # system -> {key: height / width}
+        self._dirty = 0
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+            self.seen = {s: {k: float(v) for k, v in d.items()} for s, d in data.items() if isinstance(d, dict)}
+        except (OSError, ValueError, AttributeError):
+            pass
+
+    def note(self, system, key, w, h):
+        if not w or not h or not system:
+            return
+        d = self.seen.setdefault(system, {})
+        r = round(h / w, 3)
+        if d.get(key) != r:
+            d[key] = r
+            while len(d) > 200:
+                d.pop(next(iter(d)))
+            self._dirty += 1
+            if self._dirty >= 25:
+                self.save()
+
+    def shape(self, system) -> float:
+        rs = sorted(self.seen.get(system, {}).values())
+        if len(rs) >= SHAPE_LEARN:
+            n = len(rs)
+            r = rs[n // 2] if n % 2 else (rs[n // 2 - 1] + rs[n // 2]) / 2
+        else:
+            r = CASE_SHAPES.get(system, DVD_CASE)
+        return round(min(SHAPE_MAX, max(SHAPE_MIN, r)) * 20) / 20        # steps of 0.05: no jitter
+
+    def for_view(self, systems) -> float:
+        """One system: its shape. Several: a DVD case (taller covers are scaled to fit)."""
+        systems = set(systems)
+        return self.shape(next(iter(systems))) if len(systems) == 1 else DVD_CASE
+
+    def save(self):
+        self._dirty = 0
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(self.seen), encoding="utf-8")
+            os.replace(tmp, self.path)
+        except OSError:
+            pass
 
 
 class ImageCache:
@@ -82,6 +149,11 @@ class ImageCache:
             except tk.TclError:
                 img = None
         self.images[k] = img
+        shapes = getattr(self.app, "cover_shapes", None)
+        if img is not None and k[1] == "cover" and shapes is not None and self.app.lib:
+            it = self.app.lib.get(k[0])
+            if it:
+                shapes.note(it.system, k[0], img.width(), img.height())
         while len(self.images) > self.LIMIT:
             self.images.popitem(last=False)
         self.app.on_image(k[0])
@@ -95,7 +167,8 @@ class CoverGrid(ttk.Frame):
         super().__init__(master)
         self.app = app
         self.tw = tile_w
-        self.cover_h = int(tile_w * 1.4)
+        self.shape = DVD_CASE
+        self.cover_h = int(tile_w * self.shape)
         self.th = self.cover_h + 44
         self.keys = []
         self.sel = []
@@ -152,6 +225,15 @@ class CoverGrid(ttk.Frame):
         elif bottom > y0 + h:
             self.canvas.yview_moveto(max(0, bottom - h) / total)
         self.draw()
+
+    def set_shape(self, shape):
+        """Tiles shaped like the covers shown (height / width): CD cases square, DVD cases tall."""
+        if abs(shape - self.shape) < 0.01:
+            return
+        self.shape = shape
+        self.cover_h = int(round(self.tw * shape))
+        self.th = self.cover_h + 44
+        self.layout()
 
     # -- geometry -------------------------------------------------------------
     def _total_h(self):
@@ -220,11 +302,13 @@ class CoverGrid(ttk.Frame):
             return
         if selected:
             c.create_rectangle(x - 6, y - 6, x + self.tw + 6, y + self.th + 2, fill=apptheme.ACCENT_DARK, outline=apptheme.ACCENT, width=2)
-        img = app.images.get(key)
+        img = app.images.get(key, "cover", self.tw, self.cover_h)
+        top = y
         if img:
-            iw, ih = img.width(), img.height()
-            c.create_image(x + self.tw // 2, y + self.cover_h - ih // 2 if ih < self.cover_h else y,
-                           image=img, anchor="n" if ih >= self.cover_h else "n")
+            # every cover stands on the same line (the bottom of the cover space), centred
+            ih = min(img.height(), self.cover_h)
+            top = y + self.cover_h - ih
+            c.create_image(x + self.tw // 2, y + self.cover_h, image=img, anchor="s")
         else:
             c.create_rectangle(x, y, x + self.tw, y + self.cover_h, fill="#1f3a37", outline=apptheme.LINE)
             c.create_text(x + self.tw // 2, y + 22, text=L.system_name(it.system), fill=apptheme.DIM,
@@ -240,11 +324,11 @@ class CoverGrid(ttk.Frame):
         elif lib.elsewhere(key):
             badge = BADGE["elsewhere"]
         if badge:
-            bx, by = x + self.tw - 16, y + 14
+            bx, by = x + self.tw - 16, top + 14                  # on the cover's corner
             c.create_oval(bx - 13, by - 13, bx + 13, by + 13, fill=badge[1], outline="white", width=2)
             c.create_text(bx, by, text=badge[0], fill="white", font=("TkDefaultFont", 11, "bold"))
         if lib.is_favourite(key):
-            c.create_text(x + 14, y + 14, text="★", fill="#ffd54f", font=("TkDefaultFont", 15, "bold"))
+            c.create_text(x + 14, top + 14, text="★", fill="#ffd54f", font=("TkDefaultFont", 15, "bold"))
         job = app.active_job(key)
         if job and job.state == "running" and job.kind in ("checkout", "add"):
             pw = int((self.tw - 8) * job.percent / 100)
