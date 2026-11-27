@@ -34,6 +34,7 @@ Keep all `.py` files in this folder together and run:
 | `ui_cloud.py` | Cloud Sync window |
 | `biosdb.py`, `biosdb_data.py` | identify BIOS files by content (PS2 version record, libretro fingerprints) - no GUI |
 | `biosvault.py`, `biostargets.py` | BIOS Vault: store, cloud sync, find emulator BIOS folders, install - no GUI |
+| `gamebios.py` | BIOS sets MAME wants beside the games (Game.com's `gamecom.zip`): recognised by contents, built and installed into games folders |
 | `ui_biosvault.py` | BIOS Vault window |
 | `tools/build_bios_db.py` | regenerates `biosdb_data.py` from libretro's System.dat |
 | `autosync.py` | background two-way sync (`--sync`) and its Windows / systemd scheduling - no GUI |
@@ -166,6 +167,15 @@ your own cloud drive; dump them from consoles you own.
   **Install** copies what is missing; nothing that is already there is replaced (a different file
   with the same name is reported as a conflict). Unknown and damaged files are never installed.
   **Remove what the app installed** moves only its own copies to the backup folder.
+- **BIOS that goes beside the games**: some systems are run by MAME, which looks for the system's
+  BIOS set in the games folder. For **Game.com**, the vault recognises the internal and external
+  ROMs by contents (loose under any name, in a zip, or in a zip inside a zip, as No-Intro packs ship
+  them), and **Install** writes `gamecom.zip` into every Game.com games folder on the device
+  (`Emulation/roms/gamecom`, following links to SD cards; a card that isn't inserted is skipped).
+  A `gamecom.zip` that already has the right contents is kept. The ROM Library's BIOS column shows
+  it, checking out a Game.com game copies it in, and the zip isn't listed as a game.
+- **Zips inside zips** (TOSEC packs such as the Neo Geo CD firmware) are opened, and each BIOS in
+  them is placed under the name its core expects.
 - **Cloud**: "Sync vault with cloud" copies the vault both ways with `Emulator BIOS Vault` at the
   top of your cloud drive (newest wins, nothing deleted). Tick the two boxes to include the vault in
   automatic sync and to install new files automatically - a new Steam Deck then gets everything on

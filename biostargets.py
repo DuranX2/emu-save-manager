@@ -40,6 +40,7 @@ KINDS = {
     "xemu": "xemu",
     "dolphin": "Dolphin (GameCube)",
     "emudeck": "EmuDeck BIOS folder",
+    "games": "Games folder",          # sets MAME looks for beside the games (gamebios.py)
 }
 
 
@@ -52,7 +53,7 @@ class Target:
 
     @property
     def name(self) -> str:
-        return KINDS[self.kind]
+        return self.extra.get("label") or KINDS[self.kind]
 
 
 # ---------------------------------------------------------------------------
@@ -214,10 +215,13 @@ def find_targets(resolve=None) -> List[Target]:
         if g.is_dir():
             found.append(Target("dolphin", g, f"Dolphin GameCube folder {g}"))
 
+    # games folders for the sets MAME wants beside the games (Game.com: Emulation/roms/gamecom)
+    found += games_targets()
+
     # one target per folder; a RetroArch pointed at EmuDeck's bios folder is the EmuDeck target
     out, keys = [], {}
     for t in found:
-        k = (str(t.folder).lower().rstrip("\\/"), t.kind if t.kind in ("xemu", "dolphin") else "files")
+        k = (str(t.folder).lower().rstrip("\\/"), t.kind if t.kind in ("xemu", "dolphin", "games") else "files")
         if k in keys:
             prev = keys[k]
             if prev.kind == "emudeck" or t.kind == "emudeck":
@@ -225,6 +229,18 @@ def find_targets(resolve=None) -> List[Target]:
             continue
         keys[k] = t
         out.append(t)
+    return out
+
+
+def games_targets(roots=None) -> List[Target]:
+    """One target per games folder that needs a BIOS set beside the games."""
+    import gamebios
+    roots = gamebios.roms_roots() if roots is None else roots
+    out = []
+    for key, s in gamebios.SETS.items():
+        for folder, offline in gamebios.games_folders(key, roots):
+            label = f"{s.label} in the games folder" + (" (card not inserted)" if offline else "")
+            out.append(Target("games", folder, f"{s.why}", {"set": key, "label": label, "offline": offline}))
     return out
 
 
@@ -277,6 +293,8 @@ def plan(target: Target, entries) -> List[tuple]:
             out.append((same, Path(flash_path)))
 
     k, f = target.kind, target.folder
+    if k == "games":
+        return _games_plan(target, entries)
     if k == "pcsx2":
         ps2_files(f)
     elif k == "duckstation":
@@ -301,6 +319,24 @@ def plan(target: Target, entries) -> List[tuple]:
             seen.add(key)
             unique.append((e, d))
     return unique
+
+
+def _games_entries(target: Target, entries):
+    import gamebios
+    s = gamebios.SETS[target.extra["set"]]
+    # by what the file is, so it's found in any folder (e.g. a RetroArch-style flat "system" folder)
+    return [e for e in entries if s.system in (e.system, e.ident.system) and e.ident.status == "verified"]
+
+
+def _games_plan(target: Target, entries):
+    """[(entry, <games folder>/<set>.zip)] when the vault has every piece; the zip is built from
+    the vault's files at install time (they may be loose, zipped, or zipped twice)."""
+    import gamebios
+    key = target.extra["set"]
+    mine = _games_entries(target, entries)
+    if not mine or not gamebios.complete(key, gamebios.collect(e.path for e in mine).get(key, {})):
+        return []
+    return [(mine[0], target.folder / gamebios.SETS[key].zip_name)]
 
 
 # ---------------------------------------------------------------------------
@@ -331,7 +367,11 @@ def status_of(target: Target, entries) -> dict:
     """{'present': n, 'missing': n, 'conflict': n, 'items': [(entry, dest, state)]}"""
     items, counts = [], {"present": 0, "missing": 0, "conflict": 0}
     for e, d in plan(target, entries):
-        if not d.exists():
+        if target.kind == "games":
+            import gamebios                     # any zip with the right pieces will do for MAME
+            chk = gamebios.check_zip(target.extra["set"], d)
+            state = {"ok": "present", "missing": "missing"}.get(chk, "conflict")
+        elif not d.exists():
             state = "missing"
         else:
             state = "present" if _md5_file(d) == e.ident.md5 else "conflict"
@@ -345,6 +385,9 @@ def install(target: Target, entries, log=print, dry=False) -> dict:
     """Copy what is missing.  Returns counts {'installed', 'present', 'conflict', 'failed'}."""
     manifest = load_manifest()
     counts = {"installed": 0, "present": 0, "conflict": 0, "failed": 0}
+    if target.kind == "games" and target.extra.get("offline"):
+        log(f"  {target.folder} is a link to a card that isn't inserted - skipped")
+        return counts
     for e, d, state in status_of(target, entries)["items"]:
         if state == "present":
             counts["present"] += 1
@@ -360,9 +403,17 @@ def install(target: Target, entries, log=print, dry=False) -> dict:
         try:
             d.parent.mkdir(parents=True, exist_ok=True)
             tmp = d.with_name(d.name + ".part")
-            shutil.copyfile(e.path, tmp)
+            if target.kind == "games":
+                import gamebios
+                key = target.extra["set"]
+                data = gamebios.zip_bytes(key, gamebios.collect(x.path for x in _games_entries(target, entries))[key])
+                tmp.write_bytes(data)
+                md5 = biosdb.md5_of(data)
+            else:
+                shutil.copyfile(e.path, tmp)
+                md5 = e.ident.md5
             os.replace(tmp, d)
-            manifest[str(d)] = e.ident.md5
+            manifest[str(d)] = md5
             counts["installed"] += 1
             log(f"  installed {d}")
         except OSError as ex:
@@ -438,6 +489,18 @@ def coverage(target: Target, entries) -> List[str]:
             notes.append("No good MCPX boot ROM in the vault")
         if not any(e.system == biosdb.XBOX and e.ident.size in (262144, 1048576) for e in entries):
             notes.append("No Xbox flash BIOS in the vault")
+    if k == "games":
+        import gamebios
+        s = gamebios.SETS[target.extra["set"]]
+        if target.extra.get("offline"):
+            notes.append("The card with these games isn't inserted")
+        elif not st["items"]:
+            have = gamebios.collect(e.path for e in _games_entries(target, entries)).get(target.extra["set"], {})
+            if not have:
+                notes.append(f"No {s.label} in the vault ({s.why})")
+            else:
+                lack = [s.part_labels.get(p, p) for p in s.parts if p not in have]
+                notes.append(f"The vault has only part of the {s.label}: missing the {' and '.join(lack)}")
     if k == "dolphin" and not any(e.system == biosdb.GC for e in entries):
         notes.append("No GameCube IPL (optional: Dolphin boots games without it)")
     if st["conflict"]:

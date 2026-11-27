@@ -271,8 +271,13 @@ def _all_files(node, prefix):
 
 def _items_in(sysdir, node, prefix="", depth=0):
     items = []
+    bios = set()
+    if depth == 0:                            # a BIOS set MAME wants beside the games isn't a game
+        import gamebios
+        bios = gamebios.folder_files(canonical(sysdir))
     files = {n: v for n, v in node["files"].items()
-             if n.lower() not in IGNORE_FILES and not n.startswith(".") and not n.endswith(".partial")}
+             if n.lower() not in IGNORE_FILES and n.lower() not in bios
+             and not n.startswith(".") and not n.endswith(".partial")}
     for lead, members in _group_files(list(files)):
         items.append(Item(sysdir, prefix + lead, clean_title(lead),
                           {prefix + m: files[m] for m in members}, False))

@@ -37,6 +37,7 @@ NEEDS = {
     "atarilynx": (("Atari - Lynx",), "optional", "some cores need it"),
     "atari7800": (("Atari - 7800",), "optional", "only for the start-up screen"),
     "amiga": (("Commodore - Amiga",), "required", "Amiga games need Kickstart ROMs"),
+    "gamecom": (("Tiger - Game.com",), "required", "MAME needs gamecom.zip beside the games"),
 }
 GOOD = ("verified", "identified", "in-set")
 
@@ -82,7 +83,8 @@ class SystemBios:
 
 def entries_for(system: str, entries):
     vault_systems = NEEDS.get(system, ((),))[0]
-    return [e for e in entries if e.system in vault_systems and e.ident.status in GOOD]
+    return [e for e in entries if (e.system in vault_systems or e.ident.system in vault_systems)
+            and e.ident.status in GOOD]
 
 
 def status_for(system: str, entries, targets) -> SystemBios:
