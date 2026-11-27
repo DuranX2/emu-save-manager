@@ -87,8 +87,12 @@ class CheckupDialog(tk.Toplevel):
         with lib.lock:
             return list(lib.items.values())
 
+    def _shadowed(self):
+        lib = getattr(self.app, "lib", None)
+        return list(getattr(lib, "shadowed", []) or []) if lib and self._items is None else []
+
     def run(self):
-        self.report = libcheck.check(self._all_items())
+        self.report = libcheck.check(self._all_items(), self._shadowed())
         systems = sorted({f.system_name() for f in self.report.findings}, key=str.lower)
         self.sys_box["values"] = [ALL] + systems
         if self.v_sys.get() not in self.sys_box["values"]:

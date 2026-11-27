@@ -140,6 +140,17 @@ def thumbnail(src: Path, width: int, height: int) -> Path | None:
 # ---------------------------------------------------------------------------
 # The store
 # ---------------------------------------------------------------------------
+def _merge_system(data: dict, system: str, recs: dict):
+    """Put one system file's records into data under the canonical system name and keys
+    ('dc.json' from before 'DC' was known as Dreamcast joins 'dreamcast'; its own name wins ties)."""
+    canon = L.canonical(system)
+    into = data.setdefault(canon, {})
+    for k, r in recs.items():
+        k2 = L.rekey(k)
+        if k2 not in into or system == canon:
+            into[k2] = r
+
+
 class MetaStore:
     """Game information and artwork, kept in the library and cached on this machine."""
 
@@ -170,7 +181,7 @@ class MetaStore:
             for f in sorted(tmp.glob("*.json")):
                 d = L._read_json(f, {})
                 if isinstance(d, dict):
-                    data[f.stem] = d
+                    _merge_system(data, f.stem, d)
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
         with self.lock:
@@ -182,8 +193,12 @@ class MetaStore:
         d = L._read_json(self.cache_dir / "meta.json", None)
         if not isinstance(d, dict):
             return False
+        data = {}
+        for system, recs in d.items():
+            if isinstance(recs, dict):
+                _merge_system(data, system, recs)
         with self.lock:
-            self.data = d
+            self.data = data
         return True
 
     def _save_local_copy(self):

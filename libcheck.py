@@ -108,7 +108,11 @@ DISC_SYSTEMS = {"psx", "ps2", "ps3", "psp", "gc", "wii", "wiiu", "xbox", "xbox36
                 "atarijaguarcd"}
 # Systems whose games are pictures (PICO-8 carts are .p8.png) or are mostly loose files
 PICTURE_GAMES = {"pico8"}
-LOOSE_SYSTEMS = {"dos", "scummvm", "amiga", "c64", "msx", "ps4", "psvita"}
+LOOSE_SYSTEMS = {"dos", "scummvm", "amiga", "c64", "msx", "ps4", "psvita", "pc", "windows", "ports",
+                 "linux", "steam"}
+# ROM extensions that other file types share: .md is Markdown text, but also a Mega Drive ROM
+SYSTEM_ROM_EXT = {"genesis": {".md", ".smd", ".gen", ".bin"}, "sega32x": {".md", ".32x", ".bin"},
+                  "segacd": {".md"}, "megacd": {".md"}}
 EMULATOR_NAMES = {"cemu", "dolphin", "pcsx2", "pcsx2-qt", "duckstation", "duckstation-qt", "ppsspp",
                   "ppssppwindows64", "rpcs3", "xemu", "xenia", "xenia_canary", "retroarch", "yuzu",
                   "ryujinx", "citra", "azahar", "melonds", "primehack", "vita3k", "flycast", "redream",
@@ -135,6 +139,8 @@ def file_kind(name: str, system: str = "") -> str:
     if ext in PICTURE:
         return "picture"
     stem = os.path.splitext(leaf)[0]
+    if ext in SYSTEM_ROM_EXT.get(system, ()) and stem not in SOURCE_NAMES:
+        return "game"
     if ext in SOURCE or leaf == "makefile":
         return "source"
     if leaf in SOURCE_NAMES or (stem in SOURCE_NAMES and ext in (".txt", ".md")):
@@ -369,9 +375,21 @@ def _duplicates(items, system):
     return out
 
 
-def check(items) -> Report:
-    """items: romlibrary Items (e.g. Library.items.values()). Returns a Report."""
+def check(items, shadowed=()) -> Report:
+    """items: romlibrary Items (e.g. Library.items.values()); shadowed: Library.shadowed, games
+    hidden because another folder for the same system has them too. Returns a Report."""
     rep = Report()
+    items = list(items)
+    by_key = {it.key: it for it in items}
+    for it in shadowed:
+        other = by_key.get(it.key)
+        where = f"'{other.sysdir}' and '{it.sysdir}'" if other else f"'{it.sysdir}'"
+        rep.findings.append(Finding(
+            "duplicate", it.system, title_of(it),
+            f"In two folders for this system ({where}): {it.sysdir}/{it.path}"
+            + (f" and {other.sysdir}/{other.path}" if other else "")
+            + f". The library shows it once; keeping one copy frees {rl.human(it.size)}.",
+            [it.key], it.size))
     by_sys = defaultdict(list)
     for it in items:
         by_sys[it.system].append(it)

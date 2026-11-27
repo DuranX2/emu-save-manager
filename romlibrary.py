@@ -63,7 +63,19 @@ ALIASES = {
     "nintendo 64": "n64", "nintendo ds": "nds", "3ds": "n3ds", "game boy": "gb",
     "game boy advance": "gba", "game boy color": "gbc", "tg16": "pcengine", "vita": "psvita",
     "wii u": "wiiu", "32x": "sega32x", "virtual boy": "virtualboy", "game gear": "gamegear",
+    # short names people use for folders
+    "dc": "dreamcast", "md": "genesis", "gen": "genesis", "sms": "mastersystem", "master system": "mastersystem",
+    "gg": "gamegear", "pce": "pcengine", "turbografx": "pcengine", "turbografx16": "pcengine",
+    "sat": "saturn", "scd": "segacd", "mega cd": "megacd", "gcn": "gc", "ds": "nds", "psone": "psx",
+    "ps one": "psx", "xbox one": "xboxone", "lynx": "atarilynx", "2600": "atari2600", "5200": "atari5200",
+    "7800": "atari7800", "ngcd": "neogeocd", "neogeo pocket": "ngp", "neogeo pocket color": "ngpc",
+    "ws": "wonderswan", "wsc": "wonderswancolor", "vb": "virtualboy", "gameboy": "gb",
+    "gameboy advance": "gba", "gameboy color": "gbc", "game boy colour": "gbc", "wiiware": "wii",
 }
+_SQUASH = re.compile(r"[\s_\-\.]+")
+_SQUASHED_ALIASES = {}
+# "Sega Dreamcast", "Nintendo GameCube", "Sony PlayStation 2": the maker's name in front is dropped
+MAKERS = ("sega", "nintendo", "sony", "microsoft", "nec", "snk", "bandai", "commodore")
 
 
 def canonical(folder: str) -> str:
@@ -73,10 +85,19 @@ def canonical(folder: str) -> str:
         return f
     if f in ALIASES:
         return ALIASES[f]
-    squashed = re.sub(r"[\s_\-]+", "", f)
+    if not _SQUASHED_ALIASES:
+        _SQUASHED_ALIASES.update({_SQUASH.sub("", k): v for k, v in ALIASES.items()})
+    squashed = _SQUASH.sub("", f)
     if squashed in SYSTEMS:
         return squashed
-    return ALIASES.get(squashed, f)
+    if squashed in _SQUASHED_ALIASES:
+        return _SQUASHED_ALIASES[squashed]
+    for maker in MAKERS:
+        if f.startswith(maker + " ") or f.startswith(maker + "_") or f.startswith(maker + "-"):
+            rest = canonical(f[len(maker) + 1:])
+            if rest in SYSTEMS:
+                return rest
+    return f
 
 
 def system_name(folder: str) -> str:
@@ -119,6 +140,23 @@ def clean_title(name: str) -> str:
 # ---------------------------------------------------------------------------
 # Grouping a listing into games
 # ---------------------------------------------------------------------------
+def rekey(key: str) -> str:
+    """A game key with its system part made canonical ('dc/Game.chd' -> 'dreamcast/Game.chd').
+    Keys saved before a folder name was known as an alias still find their game."""
+    system, sep, rest = key.partition("/")
+    return canonical(system) + sep + rest if sep else key
+
+
+def rekey_dict(d: dict) -> dict:
+    """{key: value} with canonical keys; if two old keys land on one, the canonical one wins."""
+    if not isinstance(d, dict):
+        return {}
+    out = {}
+    for k, v in sorted(d.items(), key=lambda kv: rekey(kv[0]) != kv[0]):
+        out.setdefault(rekey(k), v)
+    return out
+
+
 class Item:
     """One game: a file with its companion files, or a folder."""
     __slots__ = ("system", "sysdir", "key", "title", "files", "size", "mtime", "is_dir", "path")
@@ -661,6 +699,7 @@ class Library:
         self.machine = machine or machine_id()
         self.label = label or default_machine_label()
         self.items = {}            # key -> Item (library)
+        self.shadowed = []         # Items hidden because another system folder has the same game
         self.local = {}            # key -> Item (this machine's ROM folder)
         self.lib_sysdirs = {}      # canonical system -> folder name in the library
         self.local_sysdirs = {}    # canonical system -> folder name on this machine
@@ -676,8 +715,14 @@ class Library:
         c = _read_json(INDEX_CACHE, {})
         if c.get("location") != self.location or c.get("version") != 1:
             return False
-        self.items = {d["key"]: Item.from_json(d) for d in c.get("items", [])}
-        self.lib_sysdirs = c.get("sysdirs", {})
+        items, shadowed = {}, []
+        for d in c.get("items", []):
+            it = Item.from_json(d)                # keys are worked out again (folder aliases)
+            (shadowed.append(it) if it.key in items else items.__setitem__(it.key, it))
+        self.items, self.shadowed = items, shadowed
+        self.lib_sysdirs = {}
+        for sysdir in c.get("sysdirs", {}).values():
+            self.lib_sysdirs.setdefault(canonical(sysdir), sysdir)
         self.indexed_at = c.get("at", 0)
         return True
 
@@ -685,17 +730,23 @@ class Library:
         """List the library (can take minutes for a big one), then this machine and the shared files."""
         entries = list_library(self.runner, self.location)
         by_sys = build_items(entries)
-        items, sysdirs = {}, {}
-        for sysdir, lst in by_sys.items():
+        items, sysdirs, shadowed = {}, {}, []
+        # two folders for one system ('Dreamcast' and 'DC') are one system; the canonical folder name
+        # comes first, so it's where 'Add to library' puts games
+        for sysdir, lst in sorted(by_sys.items(), key=lambda kv: (kv[0].lower() != canonical(kv[0]), kv[0])):
             sysdirs.setdefault(canonical(sysdir), sysdir)
             for it in lst:
-                items[it.key] = it
+                if it.key in items:
+                    shadowed.append(it)           # the same game in both folders: shown once
+                else:
+                    items[it.key] = it
         with self.lock:
-            self.items, self.lib_sysdirs = items, sysdirs
+            self.items, self.lib_sysdirs, self.shadowed = items, sysdirs, shadowed
         self.indexed_at = time.time()
         _write_json(INDEX_CACHE, {"version": 1, "location": self.location, "at": self.indexed_at,
                                   "sysdirs": sysdirs,
-                                  "items": [dict(it.to_json(), key=it.key) for it in items.values()]})
+                                  "items": [dict(it.to_json(), key=it.key)
+                                            for it in list(items.values()) + shadowed]})
         self.refresh_local()
         self.load_shared()
 
@@ -772,7 +823,7 @@ class Library:
 
     def load_shared(self):
         self.shared = self._cat_json(self._meta("library.json"), {"items": {}})
-        self.shared.setdefault("items", {})
+        self.shared["items"] = rekey_dict(self.shared.get("items", {}))
         self.machines = {}
         rc, out = self.runner.capture(["lsjson", "--files-only", "--no-mimetype", self._meta("machines")],
                                       merge=False)
@@ -784,12 +835,13 @@ class Library:
             for n in names:
                 d = self._cat_json(self._meta("machines", n), None)
                 if isinstance(d, dict):
+                    d["items"] = rekey_dict(d.get("items", {}))
                     self.machines[n[:-5]] = d
         self._publish_mine(only_if_changed=True)
 
     def set_favourite(self, keys, on: bool) -> bool:
         latest = self._cat_json(self._meta("library.json"), {"items": {}})   # merge with other machines
-        latest.setdefault("items", {})
+        latest["items"] = rekey_dict(latest.get("items", {}))
         for k in keys:
             e = latest["items"].setdefault(k, {})
             if on:
@@ -807,7 +859,7 @@ class Library:
     # -- this machine's checkouts ----------------------------------------------
     def manifest(self) -> dict:
         m = _read_json(LOCAL_MANIFEST, {})
-        return m.get(self.location, {}) if isinstance(m, dict) else {}
+        return rekey_dict(m.get(self.location, {})) if isinstance(m, dict) else {}
 
     def _save_manifest(self, mine: dict):
         m = _read_json(LOCAL_MANIFEST, {})
