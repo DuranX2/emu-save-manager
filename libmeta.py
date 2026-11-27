@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import logging
 import os
 import queue
 import re
@@ -135,6 +136,9 @@ def thumbnail(src: Path, width: int, height: int) -> Path | None:
         return dst
     except Exception:  # noqa
         return None
+
+
+log = logging.getLogger("esm")      # the apps' log file (applog.py)
 
 
 # ---------------------------------------------------------------------------
@@ -327,10 +331,18 @@ class MetaStore:
             except queue.Empty:
                 return
             try:
+                t0 = time.monotonic()
+                n = len(self._staged_files) if kind == "media" else sorted(self._staged) if arg is None else arg
                 ok = self.upload_media() if kind == "media" else self.write_info(arg)
+                log.info("artwork: %s %s in %.1f s%s (%d more waiting)",
+                         "uploaded" if kind == "media" else "saved information for",
+                         f"{n} picture(s)" if kind == "media" else ", ".join(n) or "nothing",
+                         time.monotonic() - t0, "" if ok else f" - FAILED: {L._last_lines(self.lib.error or '')[:300]}",
+                         self._work.qsize())
                 if not ok:
                     self.write_ok = False
             except Exception as ex:  # noqa - keep going; the next flush tries again
+                log.exception("artwork: a background save failed")
                 self.write_ok = False
                 self.lib.error = str(ex)
             finally:
@@ -877,7 +889,14 @@ class Scraper:
         system = None
         dead = set()
         self.progress(0, total, f"Looking up {total} game(s)…")
+        t_start = time.monotonic()
+        log.info("artwork: looking up %d game(s) with %s%s", total, ", ".join(src.name for src in self.sources),
+                 " (look up again)" if self.refresh else "")
         for i, key in enumerate(todo, 1):
+            if i % 50 == 0:
+                log.info("artwork: %d of %d after %.0f s (%s; %d picture(s) waiting to upload, %d save(s) queued)",
+                         i, total, time.monotonic() - t_start, key.split("/", 1)[0],
+                         len(self.store._staged_files), self.store._work.qsize())
             if self.cancelled:
                 self.message = "Stopped."
                 break
@@ -904,11 +923,16 @@ class Scraper:
                 except QuotaReached as ex:
                     dead.add(src.name)
                     self.message = str(ex)
+                    log.warning("artwork: %s stopped: %s", src.name, ex)
                     continue
                 except (SourceUnavailable, HttpError) as ex:
                     dead.add(src.name)
                     self.message = str(ex) if isinstance(ex, SourceUnavailable) else \
                         f"{src.label} couldn't be reached; skipped for now."
+                    log.warning("artwork: %s stopped: %s", src.name, ex)
+                    continue
+                except Exception:  # noqa - one game's odd data mustn't stop the whole look-up
+                    log.exception("artwork: %s failed on %s", src.name, key)
                     continue
                 if res:
                     rec, pics = res
@@ -936,4 +960,5 @@ class Scraper:
             self.store.flush()                                    # one more try, in this thread
         if not self.message:
             self.message = f"Done: information for {sum(1 for k in todo if self.store.has_info(k))} of {total} game(s)."
+        log.info("artwork: finished after %.0f s: %s", time.monotonic() - t_start, self.message)
         self.progress(total, total, self.message)

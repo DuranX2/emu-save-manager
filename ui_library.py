@@ -103,6 +103,12 @@ class LibraryApp(tk.Tk):
         super().__init__()
         self.title(APP_NAME)
         self.cfg = cfg if cfg is not None else L.load_config()
+        import applog
+        applog.setup(L.APP_DIR, "library")
+        import updater
+        applog.log.info("ROM Library %s starting on %s", updater.current_version() or "(dev)", SYSTEM)
+        self.watchdog = applog.Watchdog(self).start()
+        self._draw_pending = None
         sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
         self.compact = sh < 900
         self.geometry(f"{min(1180, sw - 20)}x{min(760, sh - 70)}")
@@ -468,9 +474,18 @@ class LibraryApp(tk.Tk):
 
     def on_image(self, key):
         if self.view == "covers":
-            self.grid_view.draw()
+            self.draw_soon()
         if self.details.key == key:
             self.details.show([key])
+
+    def draw_soon(self):
+        """One redraw of the covers for many pictures arriving together."""
+        if self._draw_pending is None:
+            def go():
+                self._draw_pending = None
+                if self.view == "covers":
+                    self.grid_view.draw()
+            self._draw_pending = self.after(60, go)
 
     def on_grid_select(self):
         self._update_selection()
@@ -487,6 +502,13 @@ class LibraryApp(tk.Tk):
 
     def can_match(self):
         return M.ScreenScraperSource(M.load_ss_creds()).available
+
+    def open_log(self):
+        """The folder with the log file (what the Library did, and any freeze it noticed)."""
+        import applog
+        path = applog.log_path()
+        if path:
+            self.open_folder(path.parent)
 
     def open_artwork(self):
         if not self.lib:
@@ -649,12 +671,12 @@ class LibraryApp(tk.Tk):
         if self.artwork_dialog and self.artwork_dialog.winfo_exists():
             self.artwork_dialog.update_progress(done, total, msg)
         if done == total or done % 10 == 0:
-            self.images.forget()
+            self.images.forget_missing()          # covers found meanwhile show; the rest stay loaded
             self.refresh_meta_views()
 
     def refresh_meta_views(self, keys=None):
         if self.view == "covers":
-            self.grid_view.draw()
+            self.draw_soon()
         else:
             self.refresh_rows(keys)
         self.details.show(self.selected())
@@ -1099,14 +1121,21 @@ class LibraryApp(tk.Tk):
     def set_status(self, text):
         self.status.config(text=text)
 
+    POLL_BUDGET = 0.05            # seconds of background events per tick; the window stays responsive
+
     def _poll(self):
+        start = time.monotonic()
+        scrape = None
         try:
-            while True:
+            while time.monotonic() - start < self.POLL_BUDGET:
                 ev = self.events.get_nowait()
+                if ev[0] == "scrape":             # only the latest progress matters...
+                    if scrape and (ev[1] // 10) != (scrape[1] // 10):
+                        self._scrape_progress(*scrape[1:])      # ...but don't skip a 10-game step
+                    scrape = ev
+                    continue
                 if ev[0] == "indexed":
                     self._indexed(ev[1], ev[2])
-                elif ev[0] == "scrape":
-                    self._scrape_progress(*ev[1:])
                 elif ev[0] == "call":
                     ev[1]()
                 elif ev[0] == "log":
@@ -1118,6 +1147,8 @@ class LibraryApp(tk.Tk):
                     self.refresh_rows(keys)
         except pyqueue.Empty:
             pass
+        if scrape:
+            self._scrape_progress(*scrape[1:])
         if self.q and self.q.changed != self._q_seen:
             self._q_seen = self.q.changed
             self.fill_queue()
@@ -1140,7 +1171,7 @@ class LibraryApp(tk.Tk):
                 self.update_space()
             elif changed:
                 self.refresh_rows(changed)
-        self._poll_id = self.after(300, self._poll)
+        self._poll_id = self.after(20 if not self.events.empty() else 300, self._poll)   # catch up fast
 
     def destroy(self):
         if getattr(self, "cover_shapes", None):

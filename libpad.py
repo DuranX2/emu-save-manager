@@ -307,7 +307,7 @@ def library_items(app):
     import ui_library as U
     a = app
     items = [("Refresh", a.refresh), ("Check-up…", a.open_checkup), ("BIOS…", a.open_bios),
-             ("Artwork…", a.open_artwork), ("Settings…", a.open_settings),
+             ("Artwork…", a.open_artwork), ("Settings…", a.open_settings), ("Open log folder", a.open_log),
              ("List view" if a.view == "covers" else "Covers view", "view")]
     if a.v_search.get():
         items.append(("Clear the search", lambda: a.v_search.set("")))

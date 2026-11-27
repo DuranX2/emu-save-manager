@@ -34,6 +34,7 @@ Keep all `.py` files in this folder together and run:
 | `ui_cloud.py` | Cloud Sync window |
 | `biosdb.py`, `biosdb_data.py` | identify BIOS files by content (PS2 version record, libretro fingerprints) - no GUI |
 | `biosvault.py`, `biostargets.py` | BIOS Vault: store, cloud sync, find emulator BIOS folders, install - no GUI |
+| `applog.py` | the apps' log file and the watchdog that records a window that stops responding |
 | `gamebios.py` | BIOS sets MAME wants beside the games (Game.com's `gamecom.zip`): recognised by contents, built and installed into games folders |
 | `ui_biosvault.py` | BIOS Vault window |
 | `tools/build_bios_db.py` | regenerates `biosdb_data.py` from libretro's System.dat |
@@ -377,6 +378,10 @@ its `--rom-library` launch option or its name).
   (PlayStation, Saturn, Dreamcast…), tall for DVD cases, wide for SNES and N64 boxes. The shape is
   learned from the covers shown (built-in shapes until then). Every cover stands on the same line;
   views with several systems use DVD-shaped tiles.
+- **Log file:** `~/.emu_rom_library/logs/library.log` (Windows: `C:\Users\<you>\.emu_rom_library\logs`).
+  It records start-up, artwork look-ups (progress, uploads to the library, errors), and - if the
+  window ever stops responding for 10 seconds - what every part of the app was doing at that
+  moment. **Artwork… ▸ Open log** (or **Open log folder** in the controller's Y menu) opens it.
 - **Right-click menus.** A game's menu has the same actions as **A** on a controller (check out / in,
   favourite, details, artwork); a system's menu looks up its artwork, leaves it out of look-ups, and
   opens the Check-up and BIOS.

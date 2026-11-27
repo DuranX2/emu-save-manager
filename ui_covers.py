@@ -108,6 +108,11 @@ class ImageCache:
             self.q.put(k)
         return None
 
+    def forget_missing(self):
+        """Ask again for the covers that had no picture (a look-up may have found one since)."""
+        for k in [k for k, v in self.images.items() if v is None]:
+            self.images.pop(k, None)
+
     def forget(self, key=None):
         for k in [k for k in self.images if key is None or k[0] == key]:
             self.images.pop(k, None)
@@ -613,6 +618,7 @@ class ArtworkDialog(tk.Toplevel):
         btns = ttk.Frame(f)
         btns.grid(row=r, column=0, columnspan=3, sticky="e", pady=(10, 0))
         ttk.Button(btns, text="Close", command=self.close).pack(side="right")
+        ttk.Button(btns, text="Open log", command=app.open_log).pack(side="right", padx=(0, 6))
         self.stop_btn = ttk.Button(btns, text="Stop", command=app.stop_scrape)
         self.stop_btn.pack(side="right", padx=(0, 8))
         self.start_btn = ttk.Button(btns, text="Start", command=self.start)
