@@ -13,12 +13,15 @@ import romlibrary as L
 
 RCLONE = shutil.which("rclone")
 
-# 1. the runner adds extra flags to every command, after --config
+# 1. the runner adds extra flags to every command, last, so they win over the command's own flags
 r = cloudsync.RcloneRunner("rclone", "/x/rclone.conf", lambda m: None)
 assert r._cmd(["lsf", "a:"]) == ["rclone", "--config", "/x/rclone.conf", "lsf", "a:"]
 L.limit_runner(r); L.limit_runner(r)                      # idempotent
 assert r.extra == L.LIBRARY_FLAGS, r.extra
-assert r._cmd(["lsf", "a:"]) == ["rclone", "--config", "/x/rclone.conf"] + L.LIBRARY_FLAGS + ["lsf", "a:"]
+assert r._cmd(["lsf", "a:"]) == ["rclone", "--config", "/x/rclone.conf", "lsf", "a:"] + L.LIBRARY_FLAGS
+cmd = r._cmd(["copy", "a:", "b", "--transfers", "4"])       # the pictures' own --transfers 4 ...
+assert cmd[-len(L.LIBRARY_FLAGS):] == L.LIBRARY_FLAGS and cmd.index("4") < cmd.index("2")   # ... loses
+assert r.gate is L.SHARE_GATE
 c = cloudsync.RcloneRunner("rclone", "", lambda m: None)   # cloud sync is unchanged
 assert c._cmd(["sync", "a", "b"]) == ["rclone", "sync", "a", "b"]
 print("1. the library's runner limits checkers, transfers and multi-thread streams; cloud sync's doesn't: ok")
@@ -67,9 +70,41 @@ if RCLONE:
 else:
     print("3-4. skipped (no rclone)")
 
-# 5. check-out/check-in copies use the same small limits
+# 5. check-out/check-in copies use the same small limits and wait for a free slot
 src = Path(ROOT, "libqueue.py").read_text()
 assert '"--checkers", "2", "--multi-thread-streams", "1"' in src and 'getattr(r, "extra"' in src
-print("5. copies use 2 transfers, 2 checkers, one stream per file: ok")
+assert "gate.acquire(timeout=0.5)" in src
+print("5. copies use 2 transfers, 2 checkers, one stream per file, and share the slots: ok")
+
+# 6. real rclone: with a repeated flag, the last one wins (that's why the limits go last)
+if RCLONE:
+    import json as _j
+    o = subprocess.run([RCLONE, "rc", "--loopback", "options/get", "--transfers", "4", "--transfers", "2"],
+                       capture_output=True, text=True)
+    if o.returncode == 0:
+        assert _j.loads(o.stdout)["main"]["Transfers"] == 2, o.stdout[:200]
+        print("6. rclone takes the last --transfers: ok")
+    else:
+        print("6. skipped (this rclone has no rc --loopback)")
+
+# 7. at most SHARE_COMMANDS library commands run at once (the rest wait their turn)
+import threading, time
+peak, now, lock = 0, 0, threading.Lock()
+class Slow(cloudsync.RcloneRunner):
+    def _capture(self, args, timeout, merge):
+        global peak, now
+        with lock:
+            now += 1; peak = max(peak, now)
+        time.sleep(0.3)
+        with lock:
+            now -= 1
+        return 0, ""
+slow = L.limit_runner(Slow("rclone", "", lambda m: None))
+ths = [threading.Thread(target=slow.capture, args=(["lsf", "a:"],)) for _ in range(10)]
+[t.start() for t in ths]; [t.join() for t in ths]
+assert peak == L.SHARE_COMMANDS == 3, peak
+free = cloudsync.RcloneRunner("rclone", "", lambda m: None)
+assert free.gate is None, "cloud sync isn't limited"
+print(f"7. 10 commands at once: at most {peak} ran together; cloud sync isn't limited: ok")
 shutil.rmtree(T, ignore_errors=True)
 print("test_smblimits OK")

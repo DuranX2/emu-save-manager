@@ -416,11 +416,22 @@ class RcloneRunner:
         self.cancelled = False
         self._proc = None
         self.extra = []            # flags added to every command (the ROM Library sets its limits here)
+        self.gate = None           # if set, a semaphore: how many rclone commands may run at once
 
     def _cmd(self, args) -> list:
-        return [self.exe] + (["--config", self.conf] if self.conf else []) + list(self.extra) + list(args)
+        # extra goes last: rclone takes the last value of a repeated flag, so a limit set here
+        # always wins over a command's own --transfers / --checkers
+        return [self.exe] + (["--config", self.conf] if self.conf else []) + list(args) + list(self.extra)
+
+    def _gated(self):
+        import contextlib
+        return self.gate if self.gate is not None else contextlib.nullcontext()
 
     def run(self, args) -> int:
+        with self._gated():
+            return self._run(args)
+
+    def _run(self, args) -> int:
         cmd = self._cmd(args)
         self.log("$ " + _display(cmd))
         kw = {"creationflags": 0x08000000} if IS_WIN else {}      # no console window
@@ -441,6 +452,10 @@ class RcloneRunner:
         """Run rclone quietly; returns (exit code, output text).  Output is not logged.
         With merge=False only stdout is returned when rclone succeeds (warnings on stderr would
         corrupt JSON); on failure stderr is appended so the error can be shown."""
+        with self._gated():
+            return self._capture(args, timeout, merge)
+
+    def _capture(self, args, timeout, merge):
         cmd = self._cmd(args)
         kw = {"creationflags": 0x08000000} if IS_WIN else {}
         try:

@@ -242,11 +242,22 @@ class TransferQueue:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write("\n".join(files) + "\n")
         r = self.lib.runner
-        cmd = [r.exe] + (["--config", r.conf] if r.conf else []) + list(getattr(r, "extra", []) or []) + [
+        cmd = [r.exe] + (["--config", r.conf] if r.conf else []) + [
             "copy", src_dir, dst_dir, "--files-from-raw", listfile, "--no-traverse",
             "--transfers", "2", "--checkers", "2", "--multi-thread-streams", "1",
             "--retries", "3", "--low-level-retries", "10",
-            "--use-json-log", "--stats", "1s", "--stats-one-line", "-v"]
+            "--use-json-log", "--stats", "1s", "--stats-one-line", "-v"] + list(getattr(r, "extra", []) or [])
+        gate = getattr(r, "gate", None)
+        if gate is not None:                 # wait for a free connection to the library; Cancel still works
+            while not gate.acquire(timeout=0.5):
+                self._check_cancel()
+        try:
+            return self._copy_run(job, cmd, listfile, base_done)
+        finally:
+            if gate is not None:
+                gate.release()
+
+    def _copy_run(self, job, cmd, listfile, base_done):
         kw = {"creationflags": 0x08000000} if L.IS_WIN else {}
         errors = []
         try:

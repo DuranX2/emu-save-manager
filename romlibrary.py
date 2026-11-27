@@ -496,11 +496,20 @@ LIBRARY_FLAGS = ["--checkers", "2", "--transfers", "2", "--multi-thread-streams"
 SHARE_IDLE_TIMEOUT = "15s"         # rclone's SMB default keeps idle connections for a minute
 
 
+# At most this many rclone commands talk to the library at once (per app). Each one opens its own
+# connections to the share (up to --transfers + --checkers), and Windows 10/11 accept only 20 in
+# all, from every machine. Before 1.7.2 the cover pictures, the artwork upload, a checkout and the
+# library listing could all run together, and the pictures' own --transfers 4 overrode the limit.
+SHARE_COMMANDS = 3
+SHARE_GATE = threading.BoundedSemaphore(SHARE_COMMANDS)
+
+
 def limit_runner(runner):
     """Apply the library's connection limits to an RcloneRunner (idempotent)."""
     extra = list(getattr(runner, "extra", []) or [])
     if "--checkers" not in extra:
         runner.extra = extra + LIBRARY_FLAGS
+    runner.gate = SHARE_GATE
     return runner
 
 
