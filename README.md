@@ -29,6 +29,7 @@ Keep all `.py` files in this folder together and run:
 | `ps2icon.py` | PS2 save icons: `icon.sys`, the 3D icon format, and a Pillow renderer - no GUI |
 | `gamepad.py` | controller (XInput / Linux joystick) and keyboard navigation for Tk windows |
 | `mainpad.py` | controller navigation for the main window, its questions and other windows (Y opens an action menu) |
+| `libpad.py` | controller navigation for the ROM Library window (covers or list, systems, game actions, Y menu) |
 | `cloudsync.py` | rclone wrapper using EmuDeck's folder layout, incl. EmuDeck Cloud - no GUI |
 | `ui_cloud.py` | Cloud Sync window |
 | `biosdb.py`, `biosdb_data.py` | identify BIOS files by content (PS2 version record, libretro fingerprints) - no GUI |

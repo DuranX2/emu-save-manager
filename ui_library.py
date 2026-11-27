@@ -134,6 +134,8 @@ class LibraryApp(tk.Tk):
         self._bios_data = None               # (vault entries, emulator targets) on this machine
         self._bios_loading = False
         self._build()
+        self.pad = None
+        self._start_controller()
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self.after(200, self._poll)
         if autostart:
@@ -159,6 +161,19 @@ class LibraryApp(tk.Tk):
             return None
         from ui_biosvault import BiosVaultDialog
         return BiosVaultDialog(link, master=self)
+
+    def _start_controller(self):
+        """Controller navigation in this window (and its questions). Off with "controller": false."""
+        if not self.cfg.get("controller", True):
+            return
+        try:
+            import libpad
+            self.pad = libpad.LibraryPad(self)
+        except Exception as ex:  # noqa - a controller problem must never stop the app
+            print("Controller:", ex)
+            self.pad = None
+            return
+        self.pad.watch_hint(self.pad_hint, side="right", padx=(0, 14))
 
     def open_checkup(self):
         """A report of entries that aren't games, duplicates and formats to convert (changes nothing)."""
@@ -271,7 +286,7 @@ class LibraryApp(tk.Tk):
         ttk.Label(bar, text="Search:").pack(side="left")
         self.v_search = tk.StringVar()
         self.v_search.trace_add("write", lambda *a: self._schedule_fill())
-        e = ttk.Entry(bar, textvariable=self.v_search, width=34)
+        e = ttk.Entry(bar, textvariable=self.v_search, width=26)
         e.pack(side="left", padx=(4, 14))
         ttk.Label(bar, text="Show:").pack(side="left")
         self.v_filter = tk.StringVar(value=FILTERS[0])
@@ -285,6 +300,7 @@ class LibraryApp(tk.Tk):
                             command=lambda: self.set_view(self.v_view.get())).pack(side="left")
         self.count_label = ttk.Label(bar, text="", foreground=apptheme.DIM)
         self.count_label.pack(side="right")
+        self.pad_hint = ttk.Label(bar, text="", foreground=apptheme.ACCENT)   # shown with a controller
 
         pane = ttk.PanedWindow(self, orient="horizontal")
         pane.pack(fill="both", expand=True, padx=10)
@@ -294,8 +310,8 @@ class LibraryApp(tk.Tk):
         self.sys_tree.heading("name", text="System")
         self.sys_tree.heading("count", text="Games")
         self.sys_tree.heading("bios", text="BIOS")
-        self.sys_tree.column("name", width=96, minwidth=80, stretch=True)
-        self.sys_tree.column("count", width=68, anchor="e", stretch=False)
+        self.sys_tree.column("name", width=110, minwidth=80, stretch=True)
+        self.sys_tree.column("count", width=56, anchor="e", stretch=False)
         self.sys_tree.column("bios", width=46, anchor="center", stretch=False)
         self.sys_tree.tag_configure("bios_missing", foreground=apptheme.AMBER)
         ssb = ttk.Scrollbar(left, orient="vertical", command=self.sys_tree.yview, style=sbstyle)
@@ -616,7 +632,7 @@ class LibraryApp(tk.Tk):
 
     @staticmethod
     def _count_text(n, h):
-        return f"{h} here · {n}" if h else str(n)
+        return f"{h} of {n}" if h else str(n)          # how many are on this machine, of all
 
     def _on_system(self, _e=None):
         sel = self.sys_tree.selection()
@@ -1002,6 +1018,9 @@ class LibraryApp(tk.Tk):
         self._poll_id = self.after(300, self._poll)
 
     def destroy(self):
+        if getattr(self, "pad", None):
+            self.pad.stop()
+            self.pad = None
         if getattr(self, "_poll_id", None):
             try:
                 self.after_cancel(self._poll_id)

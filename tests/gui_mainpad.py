@@ -101,12 +101,15 @@ assert len(rows) >= 2, rows
 press("down"); pump(0.1)
 assert app.save_tree.focus() == rows[1] and app.save_tree.selection() == (rows[1],)
 press("up"); pump(0.1); press("mark"); pump(0.1)
-assert app.save_tree.selection() == (), "X on a selected save removes it"
-press("mark"); pump(0.1); press("down"); pump(0.1)
+assert set(app.save_tree.selection()) == {rows[0]} and pad.marking, "the first X keeps the save and starts marking"
+press("down"); pump(0.1)
 assert set(app.save_tree.selection()) == {rows[0]} and app.save_tree.focus() == rows[1], "moving keeps marks"
 press("mark"); pump(0.1)
 assert set(app.save_tree.selection()) == {rows[0], rows[1]}, "X marks several"
 assert "2 selected" in app.status.cget("text"), app.status.cget("text")
+press("mark"); pump(0.1)
+assert set(app.save_tree.selection()) == {rows[0]}, "X again unmarks"
+press("mark"); pump(0.1)
 press("back"); pump(0.1); assert pad.zone == "emulators" and app.focus_get() is app.emu_list
 print("2. saves: right/A in, down/up, X, B out")
 shot("mainpad-saves")

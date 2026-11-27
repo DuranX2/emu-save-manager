@@ -177,12 +177,29 @@ def _group_files(names):
     return groups
 
 
+HEX8 = re.compile(r"^[0-9A-Fa-f]{8}$")
+GAME_EXE_EXT = (".xex", ".xbe")
+
+
+def _x360_package_dir(name: str, node: dict) -> bool:
+    """An Xbox 360 title-ID folder (8 hex digits) holding content-type folders, also 8 hex digits:
+    000D0000 (Xbox Live Arcade), 00007000 (Games on Demand), 00000002 (DLC), 000B0000 (update).
+    The package files inside have no extension, so without this each one looked like a game."""
+    return bool(HEX8.match(name) and node["dirs"] and all(HEX8.match(d) for d in node["dirs"]))
+
+
 def _is_game_dir(name: str, node: dict) -> bool:
     if name.lower().endswith((".ps3", ".wiiu", ".xbox360", ".xbox", ".pc", ".dosz")):
         return True
     kids = {k.lower() for k in node["dirs"]} | {k.lower() for k in node["files"]}
     if kids & GAME_DIR_MARKERS:
         return True
+    if _x360_package_dir(name, node):
+        return True                           # 58410A1B/000D0000/<package>
+    if sum(1 for d, sub in node["dirs"].items() if _x360_package_dir(d, sub)) == 1:
+        return True                           # Game Name/58410A1B/000D0000/<package>
+    if any(f.lower().endswith(GAME_EXE_EXT) for f in node["files"]):
+        return True                           # an extracted game: one entry, not one per file
     if not node["dirs"] and len(_group_files(list(node["files"]))) <= 1:
         return True                           # a folder holding one game (with its companion files)
     return False

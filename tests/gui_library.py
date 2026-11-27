@@ -85,7 +85,7 @@ assert status("ps2/My Homebrew.iso").startswith("Only on this machine")
 assert status("ps2/God of War (USA).iso") == "In library"
 assert app.tree.set("neogeo/mslug.zip", "system") == "Neo Geo"
 sysrows = {app.sys_tree.set(i, "name"): app.sys_tree.set(i, "count") for i in app.sys_tree.get_children()}
-assert sysrows["PlayStation 2"] == "2 here · 6", sysrows
+assert sysrows["PlayStation 2"] == "2 of 6", sysrows
 print("2. statuses and systems:", {k: sysrows[k] for k in ("All systems", "PlayStation 2", "GameCube")})
 shot(app, "library-pc.png")
 

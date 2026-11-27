@@ -67,17 +67,33 @@ def focus_window(app):
     return top
 
 
-class MainPad:
-    """Attach to the main window: MainPad(app). app needs emu_list, save_tree, backup_tree,
-    on_select_emulator, backup_selected, backup_all, restore_selected and the open_* methods."""
+class PadBase:
+    """Controller handling for one app window: other windows and questions get dialog_action,
+    an open ActionMenu gets the presses, and everything else goes to self._<action>()."""
+    HINTS = {}
 
-    def __init__(self, app, backend="auto"):
+    def __init__(self, app, zone, backend="auto"):
         self.app = app
-        self.zone = "emulators"
+        self.zone = zone
         self.menu = None                      # ActionMenu while open
-        self.marking = False                  # X used in the saves: moving keeps the selection
+        self.marking = False
         self.nav = AppPad(app, self.act, backend=backend)
         self.hint = None
+
+    def show_hint(self):
+        if self.hint is not None and self.zone in self.HINTS:
+            self.hint.config(text="🎮 " + self.HINTS[self.zone])
+
+    def open_menu(self, title, items):
+        self.menu = ActionMenu(self.app, items, on_close=self._menu_closed, title=title)
+
+    def _menu_closed(self):
+        self.menu = None
+        self.focus(self.zone)
+
+    def focus(self, zone):
+        self.zone = zone
+        self.show_hint()
 
     @property
     def connected(self):
@@ -88,7 +104,7 @@ class MainPad:
         present = getattr(b, "present", None)
         return bool(present()) if present else True
 
-    def watch_hint(self, label, every_ms=2000):
+    def watch_hint(self, label, every_ms=2000, **pack):
         """Show the controller hints in `label` while a controller is connected."""
         self.hint = label
         shown = False
@@ -100,7 +116,7 @@ class MainPad:
             now = self.connected
             try:
                 if now and not shown:
-                    label.pack(side="left", padx=(16, 0))
+                    label.pack(**(pack or {"side": "left", "padx": (16, 0)}))
                     self.show_hint()
                 elif shown and not now:
                     label.pack_forget()
@@ -126,6 +142,17 @@ class MainPad:
             return
         getattr(self, "_" + action, lambda: None)()
 
+
+class MainPad(PadBase):
+    """Attach to the main window: MainPad(app). app needs emu_list, save_tree, backup_tree,
+    on_select_emulator, backup_selected, backup_all, restore_selected and the open_* methods."""
+    HINTS = {"emulators": "A: saves   LB/RB: emulator   Y: menu",
+             "saves": "A: back up selected   X: select   B: emulators   Y: menu",
+             "backups": "A: restore   B: emulators   Y: menu"}
+
+    def __init__(self, app, backend="auto"):
+        super().__init__(app, "emulators", backend=backend)
+
     def widget(self, zone=None):
         return {"emulators": self.app.emu_list, "saves": self.app.save_tree,
                 "backups": self.app.backup_tree}[zone or self.zone]
@@ -143,13 +170,6 @@ class MainPad:
                 w.focus(kids[0])
                 w.see(kids[0])
         self.show_hint()
-
-    def show_hint(self):
-        hints = {"emulators": "A: saves   LB/RB: emulator   Y: menu",
-                 "saves": "A: back up selected   X: select   B: emulators   Y: menu",
-                 "backups": "A: restore   B: emulators   Y: menu"}
-        if self.hint is not None:
-            self.hint.config(text="🎮 " + hints[self.zone])
 
     # ---- actions ----------------------------------------------------------------
     def _up(self):
@@ -212,7 +232,9 @@ class MainPad:
         cur = w.focus()
         if not cur:
             return
-        if cur in w.selection():
+        if not self.marking:                      # the first X keeps the save it's on and starts marking
+            w.selection_set(cur)
+        elif cur in w.selection():
             w.selection_remove(cur)
         else:
             w.selection_add(cur)
@@ -248,11 +270,7 @@ class MainPad:
             self.app._toggle_grouping()
 
     def _menu(self):
-        self.menu = ActionMenu(self.app, self.menu_items(), on_close=self._menu_closed)
-
-    def _menu_closed(self):
-        self.menu = None
-        self.focus(self.zone)
+        self.open_menu("Actions", self.menu_items())
 
     def menu_items(self):
         a = self.app
@@ -375,17 +393,22 @@ class ActionMenu(tk.Frame):
     """A list of actions drawn over the main window (it stays in the window, so the controller
     keeps working): Up/Down choose, A runs, B or Y closes."""
 
-    def __init__(self, app, items, on_close=None):
-        super().__init__(app, background="#1f2a44", padx=2, pady=2, highlightthickness=0)
+    def __init__(self, app, items, on_close=None, title="Actions"):
+        import apptheme
+        dark = apptheme.is_library(app)
+        edge, bg, fg, dim, sel = (("#2fb9a3", apptheme.PANEL, apptheme.TEXT, apptheme.DIM, apptheme.ACCENT_DARK)
+                                  if dark else ("#1f2a44", "#f4f6fb", "#000000", "#555555", "#2f6fd6"))
+        super().__init__(app, background=edge, padx=2, pady=2, highlightthickness=0)
         self.items = items
         self.on_close = on_close
-        inner = tk.Frame(self, background="#f4f6fb", padx=14, pady=10)
+        inner = tk.Frame(self, background=bg, padx=14, pady=10)
         inner.pack(fill="both", expand=True)
-        tk.Label(inner, text="Actions", font=("TkDefaultFont", 13, "bold"), background="#f4f6fb",
+        tk.Label(inner, text=title, font=("TkDefaultFont", 13, "bold"), background=bg, foreground=fg,
                  anchor="w").pack(fill="x")
-        self.lb = tk.Listbox(inner, height=min(len(items), 14), width=34, activestyle="none",
+        self.lb = tk.Listbox(inner, height=min(len(items), 14), width=36, activestyle="none",
                              font=("TkDefaultFont", 12), exportselection=False, relief="flat",
-                             highlightthickness=0, selectbackground="#2f6fd6", selectforeground="#fff")
+                             highlightthickness=0, background=bg, foreground=fg,
+                             selectbackground=sel, selectforeground="#fff")
         for t, _f in items:
             self.lb.insert("end", t)
         self.lb.pack(fill="both", expand=True, pady=(6, 6))
@@ -393,7 +416,7 @@ class ActionMenu(tk.Frame):
         self.lb.bind("<Double-1>", lambda e: self.act("ok"))
         self.lb.bind("<Return>", lambda e: self.act("ok"))
         self.lb.bind("<Escape>", lambda e: self.act("back"))
-        tk.Label(inner, text="A: choose   B: close", background="#f4f6fb", foreground="#555",
+        tk.Label(inner, text="A: choose   B: close", background=bg, foreground=dim,
                  anchor="w").pack(fill="x")
         self.place(relx=0.5, rely=0.5, anchor="center")
         self.lift()
