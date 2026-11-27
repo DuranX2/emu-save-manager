@@ -19,6 +19,7 @@ No GUI.  No network except the user's own rclone remote.
 
 import io
 import json
+import re
 import os
 import shutil
 import zipfile
@@ -34,35 +35,77 @@ APP_DIR = Path.home() / ".emu_save_manager"
 DEFAULT_VAULT = APP_DIR / "bios_vault"
 CACHE_FILE = APP_DIR / "bios_vault_cache.json"
 CLOUD_FOLDER = "Emulator BIOS Vault"
-CACHE_TAG = f"r{biosdb.RULES_VERSION}-{biosdb.SOURCE_VERSION}-g1"     # g: gamebios rules
+CACHE_TAG = f"r{biosdb.RULES_VERSION}-{biosdb.SOURCE_VERSION}-g1-l1"     # g: gamebios rules
 MAX_FILE = 64 * 1024 * 1024            # no BIOS is this big; keeps disc images etc. out
 SKIP_NAMES = {"desktop.ini", "thumbs.db", ".ds_store", "bios list.csv", "readme.txt"}
 SKIP_EXTS = (".txt", ".md", ".csv", ".lnk", ".url", ".exe", ".dll", ".7z", ".rar")
 
 
 class VaultEntry:
-    __slots__ = ("path", "rel", "system", "ident")
+    __slots__ = ("path", "rel", "system", "ident", "_sub")
 
-    def __init__(self, path: Path, rel: str, system: str, ident: biosdb.Identity):
-        self.path, self.rel, self.system, self.ident = path, rel, system, ident
+    def __init__(self, path: Path, rel: str, system: str, ident: biosdb.Identity, sub: str = None):
+        self.path, self.rel, self.system, self.ident, self._sub = path, rel, system, ident, sub
 
     @property
     def sub(self) -> str:
         """Path below the system folder ('scph1001.bin' or 'dc/dc_boot.bin')."""
+        if self._sub is not None:
+            return self._sub
         return self.rel.split("/", 1)[1] if "/" in self.rel else self.rel
+
+
+# A vault can also be laid out like RetroArch's flat system folder, or have a folder grouping the
+# system folders ("Sorted by system/Sony - PlayStation 2/..."). Both are understood.
+FLAT_FOLDERS = {"system", "bios", "retroarch system", "retroarch"}
+FLAT_SET = "RetroArch system folder"        # unknown files in subfolders of a flat folder (dc/, Machines/)
+
+
+def _layout(rel: str, known) -> tuple:
+    """(kind, system folder or '', path below it) for a file in the vault.
+    kind: 'system' (<System>/...), 'flat' (system/...: the system comes from the contents),
+    or None (a loose file at the top: not in a system)."""
+    parts = rel.split("/")
+    if len(parts) < 2:
+        return None, "", rel
+    top = parts[0]
+    if top.lower() in FLAT_FOLDERS and top not in known:
+        return "flat", "", "/".join(parts[1:])
+    if len(parts) >= 3 and top not in known and " - " not in top:
+        return "system", parts[1], "/".join(parts[2:])          # a folder grouping system folders
+    return "system", top, "/".join(parts[1:])
 
 
 def vault_dir(cfg: dict) -> Path:
     return Path(cfg.get("bios_vault", {}).get("folder") or DEFAULT_VAULT)
 
 
-def remote_vault_path(remote: str, base: str) -> str:
-    """Top level of the cloud drive; for EmuDeck Cloud the account's own folder."""
+def cloud_folder(cfg: dict) -> str:
+    """The vault's folder on the cloud drive: "Emulator BIOS Vault" unless set (e.g. "Emudeck/BIOS",
+    when the vault on the PC is that folder in the OneDrive folder, so every device uses the one copy)."""
+    f = str(cfg.get("bios_vault", {}).get("cloud_folder") or "").strip().strip("/\\")
+    return f.replace("\\", "/") or CLOUD_FOLDER
+
+
+def cloud_folder_for(vault: Path) -> str:
+    """If the vault is inside a OneDrive / Dropbox / Google Drive folder on this machine, the same
+    folder's path on the cloud drive ("E:/OneDrive/Emudeck/BIOS" -> "Emudeck/BIOS"); else ''."""
+    parts = [x for x in re.split(r"[\\/]+", str(vault)) if x]
+    for i, part in enumerate(parts[:-1]):
+        low = part.lower()
+        if low == "onedrive" or low.startswith("onedrive - ") or low in ("dropbox", "google drive", "my drive"):
+            return "/".join(parts[i + 1:])
+    return ""
+
+
+def remote_vault_path(remote: str, base: str, folder: str = CLOUD_FOLDER) -> str:
+    """Top level of the cloud drive (or the folder set); for EmuDeck Cloud the account's own folder."""
+    folder = folder or CLOUD_FOLDER
     if cs.is_emudeck_cloud(remote):
         b = base.strip("/")
         prefix = b[:-len("Emudeck/saves")].strip("/") if b.lower().endswith("emudeck/saves") else b
-        return f"{remote}:{prefix}/{CLOUD_FOLDER}" if prefix else f"{remote}:{CLOUD_FOLDER}"
-    return f"{remote}:{CLOUD_FOLDER}"
+        return f"{remote}:{prefix}/{folder}" if prefix else f"{remote}:{folder}"
+    return f"{remote}:{folder}"
 
 
 # ---------------------------------------------------------------------------
@@ -86,6 +129,7 @@ def _save_cache(cache: dict):
 def scan(vault: Path) -> List[VaultEntry]:
     """Every file in the vault with its identity (cached by size and modification time)."""
     cache, fresh, out = _load_cache(), {}, []
+    known = _systems()
     if not vault.is_dir():
         return out
     for root, dirs, files in os.walk(vault):
@@ -93,9 +137,9 @@ def scan(vault: Path) -> List[VaultEntry]:
         for f in sorted(files, key=str.lower):
             p = Path(root) / f
             rel = p.relative_to(vault).as_posix()
-            if "/" not in rel or f.lower() in SKIP_NAMES:
+            kind, system, sub = _layout(rel, known)
+            if kind is None or f.lower() in SKIP_NAMES:
                 continue                       # loose files at the top are not in a system
-            system = rel.split("/", 1)[0]
             try:
                 st = p.stat()
             except OSError:
@@ -115,11 +159,13 @@ def scan(vault: Path) -> List[VaultEntry]:
                 c["names"] = list(c["names"])
                 ident = biosdb.Identity(**dict(c, names=tuple(c["names"])))
             fresh[key] = dict(c, names=list(c["names"]))
-            if ident.status == "unknown" and rel.count("/") >= 2:
+            if kind == "flat":                 # the system comes from what the file is
+                system = ident.system if ident.status != "unknown" else (FLAT_SET if "/" in sub else biosdb.UNKNOWN)
+            if ident.status == "unknown" and "/" in sub:
                 # a member of a folder set an emulator core needs as-is (dc/, Machines/ ...)
                 ident = biosdb.Identity(ident.system, "kept with its folder set",
                                         "in-set", ident.md5, ident.size, ident.names, ident.region)
-            out.append(VaultEntry(p, rel, system, ident))
+            out.append(VaultEntry(p, rel, system, ident, sub))
     _save_cache(fresh)
     return out
 
@@ -317,7 +363,7 @@ def move_to_system(vault: Path, rel: str, system: str) -> str:
 # Cloud
 # ---------------------------------------------------------------------------
 def sync_cloud(cfg: dict, log=print, dry=False, runner=None) -> bool:
-    """Two-way copy of the vault with '<remote>:Emulator BIOS Vault'.  Newest wins,
+    """Two-way copy of the vault with '<remote>:Emulator BIOS Vault' (or the folder set).  Newest wins,
     nothing deleted; files a download replaces go to <backup>/bios_vault_overwritten/."""
     c = cfg.get("cloud", {})
     exe = (runner.exe if runner else cs.usable_rclone(c.get("rclone", ""), log, conf=c.get("config", ""),
@@ -329,7 +375,7 @@ def sync_cloud(cfg: dict, log=print, dry=False, runner=None) -> bool:
     vault = vault_dir(cfg)
     vault.mkdir(parents=True, exist_ok=True)
     runner = runner or cs.RcloneRunner(exe, c.get("config", ""), log)
-    rpath = remote_vault_path(remote, c.get("base") or cs.DEFAULT_BASE)
+    rpath = remote_vault_path(remote, c.get("base") or cs.DEFAULT_BASE, cloud_folder(cfg))
     stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     backup = Path(cfg.get("backup_dir") or APP_DIR / "backups") / "bios_vault_overwritten" / stamp
     log(f"BIOS Vault <-> {rpath}")
