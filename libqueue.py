@@ -312,6 +312,10 @@ class TransferQueue:
         if not item:
             raise RuntimeError("This game is no longer in the library (refresh the library).")
         dst = self._local_root() / lib.local_dir_for(item.system)
+        if item.system in lib.offline or (dst.is_symlink() and not dst.exists()):
+            target = lib.offline.get(item.system, ("", os.readlink(dst) if dst.is_symlink() else ""))[1]
+            raise RuntimeError(f"{L.system_name(item.system)}'s folder ({dst.name}) is a link to {target}, "
+                               f"which isn't there. Insert that SD card, then try again.")
         have = {}
         for rel in item.files:
             try:

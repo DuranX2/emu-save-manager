@@ -30,7 +30,7 @@ COVER_BG = "#122624"     # behind the cover grid
 
 # status colours readable on the dark background (the light theme's are too dark here)
 STATUS = {"here": "#6fd18a", "partial": "#ffb260", "local_only": "#7cc0ff", "elsewhere": "#a6b4b1",
-          "busy": "#d39cf0", "failed": "#ff7a7a"}
+          "busy": "#d39cf0", "failed": "#ff7a7a", "card_out": "#c9b37a"}
 
 
 def is_library(widget) -> bool:

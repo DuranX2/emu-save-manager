@@ -308,12 +308,24 @@ def _last_lines(text: str, n=3) -> str:
 
 
 def list_local(root: Path):
-    """Every file under a local ROM folder -> [(path, size, mtime, is_dir)]."""
+    """Every file under a local ROM folder -> [(path, size, mtime, is_dir)].
+    Linked folders are followed (e.g. Emulation/roms/ps2 -> a folder on an SD card), each real
+    folder once, so a link that points back up can't loop."""
     entries = []
     root = Path(root)
     if not root.is_dir():
         return entries
-    for dirpath, dirnames, filenames in os.walk(root):
+    seen = set()
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=True):
+        try:
+            real = os.path.realpath(dirpath)
+        except OSError:
+            real = dirpath
+        key = os.path.normcase(real)
+        if key in seen:                       # reached again through another link: skip
+            dirnames[:] = []
+            continue
+        seen.add(key)
         rel = os.path.relpath(dirpath, root).replace(os.sep, "/")
         rel = "" if rel == "." else rel + "/"
         dirnames[:] = [d for d in dirnames if not (rel == "" and d == META_DIR)]
@@ -324,6 +336,49 @@ def list_local(root: Path):
                 continue
             entries.append((rel + f, st.st_size, st.st_mtime, False))
     return entries
+
+
+def missing_links(root: Path) -> dict:
+    """System folders in a local ROM folder that are links to somewhere that isn't there right now
+    (an SD card that isn't inserted): {folder name: where it points}."""
+    out = {}
+    root = Path(root)
+    try:
+        names = os.listdir(root)
+    except OSError:
+        return out
+    for n in names:
+        p = root / n
+        try:
+            if p.is_symlink() and not p.exists():
+                out[n] = os.readlink(p)
+        except OSError:
+            continue
+    return out
+
+
+def drive_of(path) -> tuple:
+    """(device id, mount point) of the drive a path is on, following links; (None, '') if missing."""
+    try:
+        real = Path(os.path.realpath(path))
+        while not real.exists() and real.parent != real:
+            real = real.parent
+        dev = real.stat().st_dev
+        mount = real
+        while mount.parent != mount and os.path.ismount(str(mount)) is False:
+            mount = mount.parent
+        return dev, str(mount)
+    except OSError:
+        return None, ""
+
+
+def drive_label(mount: str, dev=None) -> str:
+    """'internal' for the drive the home folder is on, else the card's (mount point's) name."""
+    if dev is None:
+        dev = drive_of(mount)[0]
+    if dev is not None and dev == drive_of(Path.home())[0]:
+        return "internal"
+    return Path(mount).name or mount
 
 
 def default_local_roms() -> str:
@@ -550,6 +605,7 @@ class Library:
         self.local = {}            # key -> Item (this machine's ROM folder)
         self.lib_sysdirs = {}      # canonical system -> folder name in the library
         self.local_sysdirs = {}    # canonical system -> folder name on this machine
+        self.offline = {}          # canonical system -> (folder name, link target): card not inserted
         self.shared = {"items": {}}
         self.machines = {}         # machine id -> its checkouts file
         self.indexed_at = 0.0
@@ -585,14 +641,50 @@ class Library:
         self.load_shared()
 
     def refresh_local(self):
-        local, sysdirs = {}, {}
+        local, sysdirs, offline = {}, {}, {}
         if self.local_roms:
             for sysdir, lst in build_items(list_local(Path(self.local_roms))).items():
                 sysdirs.setdefault(canonical(sysdir), sysdir)
                 for it in lst:
                     local[it.key] = it
+            for sysdir, target in missing_links(Path(self.local_roms)).items():
+                offline[canonical(sysdir)] = (sysdir, target)
+                sysdirs.setdefault(canonical(sysdir), sysdir)
         with self.lock:
-            self.local, self.local_sysdirs = local, sysdirs
+            self.local, self.local_sysdirs, self.offline = local, sysdirs, offline
+
+    # -- drives (a system folder can be a link to an SD card) ---------------------
+    def system_path(self, system: str) -> Path:
+        return Path(self.local_roms) / self.local_dir_for(system)
+
+    def system_space(self, system: str):
+        """(total, used, free) of the drive this system's games go to; None if its card is out."""
+        if system in self.offline or not self.local_roms:
+            return None
+        return disk_space(os.path.realpath(self.system_path(system)))
+
+    def drives(self) -> list:
+        """[(label, total, used, free, [systems])] for each drive this machine's ROMs are on:
+        the ROM folder's own drive first, then any card a system folder links to."""
+        if not self.local_roms:
+            return []
+        out = {}
+        root_dev, root_mount = drive_of(self.local_roms)
+        if root_dev is not None:
+            out[root_dev] = [root_mount, []]
+        for system, sysdir in sorted(self.local_sysdirs.items()):
+            if system in self.offline:
+                continue
+            dev, mount = drive_of(Path(self.local_roms) / sysdir)
+            if dev is None:
+                continue
+            out.setdefault(dev, [mount, []])[1].append(system)
+        res = []
+        for dev, (mount, systems) in out.items():
+            sp = disk_space(mount)
+            if sp:
+                res.append((drive_label(mount, dev), sp[0], sp[1], sp[2], systems))
+        return res
 
     # -- shared files on the library ------------------------------------------
     def _meta(self, *parts):
@@ -676,10 +768,12 @@ class Library:
         self._publish_mine()
 
     def _publish_mine(self, only_if_changed=False):
-        mine = {k: v for k, v in self.manifest().items() if self.status(k)[0] in ("here", "partial")}
-        space = disk_space(self.local_roms)
+        mine = {k: v for k, v in self.manifest().items()
+                if self.status(k)[0] in ("here", "partial", "card_out")}
+        drives = self.drives()
         doc = {"machine": self.machine, "label": self.label, "items": mine,
-               "free": space[2] if space else None, "total": space[0] if space else None}
+               "free": sum(d[3] for d in drives) if drives else None,
+               "total": sum(d[1] for d in drives) if drives else None}
         old = self.machines.get(self.machine, {})
         if only_if_changed and {k: old.get(k) for k in ("label", "items")} == \
                 {k: doc[k] for k in ("label", "items")}:
@@ -697,11 +791,15 @@ class Library:
         return self.lib_sysdirs.get(system) or system
 
     def status(self, key):
-        """('here' | 'partial' | 'not_here' | 'local_only', detail)"""
+        """('here' | 'partial' | 'not_here' | 'local_only' | 'card_out', detail).
+        card_out: checked out to a system folder that links to a card that isn't inserted."""
         lib, loc = self.items.get(key), self.local.get(key)
         if loc and not lib:
             return "local_only", "Only on this machine"
         if not loc:
+            system = key.split("/", 1)[0]
+            if system in self.offline and key in self.manifest():
+                return "card_out", self.offline[system][1]
             return "not_here", ""
         want = {p: s for p, (s, _) in lib.files.items()}
         have = {p: s for p, (s, _) in loc.files.items()}
@@ -728,8 +826,13 @@ class Library:
         n, total = 0, 0
         with self.lock:
             keys = list(self.items)
+        mine = self.manifest()
         for k in keys:
-            if self.status(k)[0] in ("here", "partial"):
+            st = self.status(k)[0]
+            if st in ("here", "partial"):
                 n += 1
                 total += self.local[k].size
+            elif st == "card_out":
+                n += 1
+                total += mine.get(k, {}).get("size", 0)
         return n, total

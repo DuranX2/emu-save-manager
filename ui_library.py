@@ -599,7 +599,7 @@ class LibraryApp(tk.Tk):
         for k in lib.all_keys():
             it = lib.get(k)
             counts[it.system] = counts.get(it.system, 0) + 1
-            if lib.status(k)[0] in ("here", "partial", "local_only"):
+            if lib.status(k)[0] in ("here", "partial", "local_only", "card_out"):
                 here[it.system] = here.get(it.system, 0) + 1
         self.sys_tree.delete(*self.sys_tree.get_children())
         total, total_here = sum(counts.values()), sum(here.values())
@@ -625,7 +625,11 @@ class LibraryApp(tk.Tk):
             self.system_sel = new
             self.fill_games()
             sb = self.bios.get(new)
-            if sb and sb.need:
+            if self.lib and new in self.lib.offline:
+                sysdir, target = self.lib.offline[new]
+                self.set_status(f"{L.system_name(new)}'s folder ({sysdir}) is a link to {target}, which isn't "
+                                f"there: insert that SD card to use these games.")
+            elif sb and sb.need:
                 self.set_status(sb.text(L.system_name(new)))
 
     # ------------------------------------------------------------------ games list
@@ -647,6 +651,8 @@ class LibraryApp(tk.Tk):
             text, tags = f"◐ Incomplete ({detail})", ["partial"]
         elif st == "local_only":
             text, tags = "Only on this machine", ["local_only"]
+        elif st == "card_out":
+            text, tags = "▣ On an SD card that isn't inserted", ["card_out"]
         elif elsewhere:
             text, tags = "In library · on " + ", ".join(elsewhere), ["elsewhere"]
         else:
@@ -689,7 +695,7 @@ class LibraryApp(tk.Tk):
             return True
         st = lib.status(key)[0]
         if flt == "On this machine":
-            return st in ("here", "partial", "local_only")
+            return st in ("here", "partial", "local_only", "card_out")
         if flt == "Not on this machine":
             return st == "not_here"
         if flt == "Checked out elsewhere":
@@ -733,7 +739,7 @@ class LibraryApp(tk.Tk):
         elif col == "title":
             f = lambda k: self.display_title(k).lower()
         elif col == "status":
-            order = {"here": 0, "partial": 1, "local_only": 2, "not_here": 3}
+            order = {"here": 0, "partial": 1, "card_out": 2, "local_only": 3, "not_here": 4}
             f = lambda k: (order[lib.status(k)[0]], lib.get(k).title.lower())
         elif col == "fav":
             f = lambda k: (not lib.is_favourite(k), lib.get(k).title.lower())
@@ -793,15 +799,36 @@ class LibraryApp(tk.Tk):
         if not lib.local_roms:
             messagebox.showinfo(APP_NAME, "Set this machine's ROM folder in Settings first.", parent=self)
             return
-        need = sum(lib.items[k].size - (lib.local[k].size if k in lib.local else 0) for k in keys)
-        space = L.disk_space(lib.local_roms)
-        pending = self.q.pending_checkout_bytes()
-        if space and need + pending + Q.SPACE_MARGIN > space[2]:
-            messagebox.showwarning(APP_NAME, f"Not enough space on this machine.\n\nThese games need "
-                                   f"{L.human(need)}" + (f" (plus {L.human(pending)} already queued)" if pending else "")
-                                   + f", and {L.human(space[2])} is free.\n\nCheck some games in first to make room.",
-                                   parent=self)
+        out = sorted({lib.items[k].system for k in keys if lib.items[k].system in lib.offline})
+        if out:
+            cards = "\n".join(f"  {L.system_name(x)}: {lib.offline[x][0]} → {lib.offline[x][1]}" for x in out)
+            messagebox.showwarning(APP_NAME, "These systems' folders are links to an SD card that isn't inserted:"
+                                   f"\n\n{cards}\n\nInsert the card, then check the games out.", parent=self)
             return
+        need = sum(lib.items[k].size - (lib.local[k].size if k in lib.local else 0) for k in keys)
+        # each system's games go to the drive its folder is on (a linked folder can be on an SD card)
+        per_drive = {}                       # device -> [need, pending, free, label]
+        for k in keys:
+            system = lib.items[k].system
+            dev, mount = L.drive_of(lib.system_path(system))
+            sp = lib.system_space(system)
+            if dev is None or not sp:
+                continue
+            d = per_drive.setdefault(dev, [0, 0, sp[2], L.drive_label(mount, dev)])
+            d[0] += lib.items[k].size - (lib.local[k].size if k in lib.local else 0)
+        for j in self.q.snapshot():
+            if j.kind == "checkout" and j.state in ("queued", "running"):
+                dev, _m = L.drive_of(lib.system_path(j.key.split("/", 1)[0]))
+                if dev in per_drive:
+                    per_drive[dev][1] += max(0, j.size - j.done)
+        for d_need, pending, free, label in per_drive.values():
+            if d_need + pending + Q.SPACE_MARGIN > free:
+                where = "this machine" if label == "internal" else f"the SD card \"{label}\""
+                messagebox.showwarning(APP_NAME, f"Not enough space on {where}.\n\nThese games need "
+                                       f"{L.human(d_need)}" + (f" (plus {L.human(pending)} already queued)" if pending else "")
+                                       + f", and {L.human(free)} is free.\n\nCheck some games in first to make room.",
+                                       parent=self)
+                return
         self.q.add("checkout", keys)
         self.set_status(f"Queued {len(keys)} game(s) to check out ({L.human(need)}).")
         self.refresh_rows(keys)
@@ -913,11 +940,18 @@ class LibraryApp(tk.Tk):
             return
         space = L.disk_space(lib.local_roms)
         n, size = lib.checked_out_size()
-        if space:
+        drives = lib.drives() if space else []
+        if space and len(drives) > 1:           # system folders linked to SD cards
+            self.space_bar["value"] = 100 * space[1] / space[0] if space[0] else 0
+            parts = " · ".join(f"{L.human(free)} free ({label})" for label, _t, _u, free, _s in drives)
+            out = f" · card out: {', '.join(L.system_name(x) for x in sorted(lib.offline))}" if lib.offline else ""
+            self.space_label.config(text=f"{lib.label}: {parts} · {n} game(s) checked out ({L.human(size)}){out}")
+        elif space:
             total, used, free = space
             self.space_bar["value"] = 100 * used / total if total else 0
+            out = f" · card out: {', '.join(L.system_name(x) for x in sorted(lib.offline))}" if lib.offline else ""
             self.space_label.config(text=f"{lib.label}: {L.human(free)} free of {L.human(total)} · "
-                                         f"{n} game(s) checked out ({L.human(size)})")
+                                         f"{n} game(s) checked out ({L.human(size)}){out}")
         else:
             self.space_label.config(text=f"{lib.local_roms} isn't reachable.")
 

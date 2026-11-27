@@ -15,7 +15,7 @@ APP_NAME = "ROM Library"
 import apptheme
 
 BADGE = {"here": ("✔", "#2e7d32"), "partial": ("◐", "#e65100"), "local_only": ("●", "#1565c0"),
-         "busy": ("⬇", "#6a1b9a"), "elsewhere": ("⇄", "#6d6d6d")}
+         "busy": ("⬇", "#6a1b9a"), "elsewhere": ("⇄", "#6d6d6d"), "card_out": ("▣", "#8a7440")}
 
 
 class ImageCache:
@@ -399,7 +399,8 @@ class DetailsPanel(ttk.Frame):
                 r += 1
         st, detail = lib.status(key)
         where = {"here": "✔ On this machine", "partial": f"◐ Incomplete on this machine ({detail})",
-                 "local_only": "Only on this machine (not in the library)", "not_here": "In the library"}[st]
+                 "local_only": "Only on this machine (not in the library)", "not_here": "In the library",
+                 "card_out": f"Checked out to an SD card that isn't inserted ({detail})"}[st]
         other = lib.elsewhere(key)
         if other:
             where += " · on " + ", ".join(other)
