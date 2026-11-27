@@ -28,12 +28,13 @@ from typing import Dict, List
 
 import biosdb
 import cloudsync as cs
+import gamebios
 
 APP_DIR = Path.home() / ".emu_save_manager"
 DEFAULT_VAULT = APP_DIR / "bios_vault"
 CACHE_FILE = APP_DIR / "bios_vault_cache.json"
 CLOUD_FOLDER = "Emulator BIOS Vault"
-CACHE_TAG = f"r{biosdb.RULES_VERSION}-{biosdb.SOURCE_VERSION}"
+CACHE_TAG = f"r{biosdb.RULES_VERSION}-{biosdb.SOURCE_VERSION}-g1"     # g: gamebios rules
 MAX_FILE = 64 * 1024 * 1024            # no BIOS is this big; keeps disc images etc. out
 SKIP_NAMES = {"desktop.ini", "thumbs.db", ".ds_store", "bios list.csv", "readme.txt"}
 SKIP_EXTS = (".txt", ".md", ".csv", ".lnk", ".url", ".exe", ".dll", ".7z", ".rar")
@@ -105,9 +106,10 @@ def scan(vault: Path) -> List[VaultEntry]:
                 ident = biosdb.Identity(**c)
             else:
                 try:
-                    ident = biosdb.identify(p.read_bytes(), f, system)
+                    data = p.read_bytes()
                 except OSError:
                     continue
+                ident = identify(data, f, system)
                 c = {k: getattr(ident, k) for k in ("system", "label", "status", "md5", "size",
                                                       "names", "region")}
                 c["names"] = list(c["names"])
@@ -122,11 +124,21 @@ def scan(vault: Path) -> List[VaultEntry]:
     return out
 
 
+def identify(data: bytes, name: str, hint_system: str = "") -> biosdb.Identity:
+    """libretro's list first; then the sets MAME wants beside the games (Game.com)."""
+    ident = biosdb.identify(data, name, hint_system)
+    if ident.status == "unknown":
+        g = gamebios.identify(name, data)
+        if g:
+            return g
+    return ident
+
+
 def scan_any(folder):
     """Identify every file under any folder (read-only): [(system, status, label, path)]."""
     out = []
     for name, rel, data in _iter_sources([folder]):
-        i = biosdb.identify(data, name)
+        i = identify(data, name)
         out.append((i.system, i.status, i.label, rel))
     return sorted(out, key=lambda r: (r[0] == biosdb.UNKNOWN, r[0], r[3].lower()))
 
@@ -160,11 +172,13 @@ def _is_set(rel: str) -> bool:
     """<System folder>/<sub folder>/.../<file>: a folder set kept exactly as it is.
     A system folder is named like the vault's ('Sega - Dreamcast', 'blueMSX - MSX ...')."""
     parts = rel.split("/")
+    if any(x.lower().endswith(".zip") for x in parts[:-1]):
+        return False                            # a file from a zip inside a zip: placed on its own
     return len(parts) >= 3 and (" - " in parts[0] or parts[0] in _systems())
 
 
 def _systems():
-    return {v[0] for v in biosdb.DB.values()} | {biosdb.PS2, biosdb.XBOX, biosdb.GC}
+    return {v[0] for v in biosdb.DB.values()} | {biosdb.PS2, biosdb.XBOX, biosdb.GC} | set(gamebios.BY_SYSTEM)
 
 
 def _iter_file(p: Path, rel: str):
@@ -179,18 +193,18 @@ def _iter_file(p: Path, rel: str):
     if low.endswith(".zip") and size < 512 * 1024 * 1024:
         try:
             with zipfile.ZipFile(p) as z:
-                inner = [i for i in z.infolist() if not i.is_dir() and i.file_size <= MAX_FILE]
-                ids = [biosdb.identify(z.read(i), i.filename) for i in inner[:400]]
-                # a zip that is itself a BIOS set (Dreamcast arcade boards, Neo Geo) is kept whole
+                inner = _zip_members(z)
+                ids = [biosdb.identify(d, n) for n, _r, d in inner[:400]]
+                # a zip that is itself a BIOS set (Dreamcast arcade boards, Neo Geo, Game.com) is
+                # kept whole
                 if not any(x.status in ("verified", "identified") for x in ids):
                     if size <= MAX_FILE:
                         yield p.name, rel, p.read_bytes()
                     return
-                for i in inner:
-                    n = i.filename.rsplit("/", 1)[-1]
+                for n, inner_rel, data in inner:
                     if n.lower() in SKIP_NAMES or n.lower().endswith(SKIP_EXTS):
                         continue
-                    yield n, i.filename, z.read(i)
+                    yield n, inner_rel, data
         except (zipfile.BadZipFile, OSError, RuntimeError, NotImplementedError):
             if size <= MAX_FILE:               # not readable as a zip: keep it as a plain file
                 try:
@@ -203,6 +217,28 @@ def _iter_file(p: Path, rel: str):
             yield p.name, rel, p.read_bytes()
         except OSError:
             return
+
+
+def _zip_members(z: zipfile.ZipFile, depth: int = 0):
+    """[(name, path inside, bytes)]; a zip inside the zip is opened too (TOSEC and No-Intro packs
+    ship BIOS files as zips inside a zip), unless it's a set kept whole (nothing in it known)."""
+    out = []
+    for i in z.infolist():
+        if i.is_dir() or i.file_size > MAX_FILE:
+            continue
+        data = z.read(i)
+        n = i.filename.rsplit("/", 1)[-1]
+        if depth == 0 and n.lower().endswith(".zip"):
+            try:
+                with zipfile.ZipFile(io.BytesIO(data)) as z2:
+                    sub = _zip_members(z2, 1)
+                if any(biosdb.identify(d, sn).status in ("verified", "identified") for sn, _r, d in sub[:400]):
+                    out += [(sn, f"{i.filename}/{sr}", d) for sn, sr, d in sub]
+                    continue
+            except (zipfile.BadZipFile, RuntimeError, NotImplementedError):
+                pass
+        out.append((n, i.filename, data))
+    return out
 
 
 def _target_rel(name: str, rel: str, ident: biosdb.Identity, known_systems) -> str:
@@ -225,10 +261,10 @@ def add(vault: Path, paths, log=print) -> dict:
     a taken name gets ' (2)' etc.  Returns counts."""
     vault.mkdir(parents=True, exist_ok=True)
     have = {e.ident.md5: e.rel for e in scan(vault)}
-    known_systems = {v[0] for v in biosdb.DB.values()} | {biosdb.PS2, biosdb.XBOX, biosdb.GC}
+    known_systems = _systems()
     counts = {"added": 0, "duplicate": 0, "skipped": 0}
     for name, rel, data in _iter_sources(paths):
-        ident = biosdb.identify(data, name)
+        ident = identify(data, name)
         in_set = _is_set(rel)
         if ident.status == "unknown" and not in_set and not any(p in known_systems for p in rel.split("/")[:-1]):
             if not name.lower().endswith((".bin", ".rom", ".img", ".bios", ".sms", ".gg", ".pce",

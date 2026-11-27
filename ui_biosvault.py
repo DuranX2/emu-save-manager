@@ -127,7 +127,8 @@ class BiosVaultDialog(tk.Toplevel):
         ttk.Label(self, text="Only your own files: the vault never downloads BIOS files from anywhere "
                              "except your own cloud drive (folder \"Emulator BIOS Vault\"). Files are "
                              "identified by content; unknown or damaged files are kept but never installed. "
-                             "Nothing in an emulator folder is overwritten.",
+                             "Nothing in an emulator folder is overwritten. BIOS sets MAME looks for beside the games "
+                             "(Game.com's gamecom.zip) are installed into the games folders.",
                   wraplength=1180, foreground=self.c["dim"], padding=(10, 2)).pack(anchor="w")
 
         self.log = tk.Text(self, height=8, wrap="word", state="disabled", relief="flat",
