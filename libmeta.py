@@ -17,6 +17,7 @@ import hashlib
 import io
 import json
 import os
+import queue
 import re
 import shutil
 import tempfile
@@ -150,6 +151,10 @@ class MetaStore:
         self._staged_files = []         # paths (relative to the staging dir) waiting to be uploaded
         self._stage_dir = Path(tempfile.mkdtemp(prefix="romlib-media-"))
         self.cache_dir = MEDIA_CACHE / media_id(library.location)
+        self._work = queue.Queue()      # background writes to the library, done in order
+        self._worker = None
+        self._io_lock = threading.Lock()    # one write to the library at a time
+        self.write_ok = True            # False once a background write failed (until the next flush)
 
     # -- reading -------------------------------------------------------------
     def load(self):
@@ -264,13 +269,58 @@ class MetaStore:
         with self.lock:
             return sum(len(v) for v in self._staged.values())
 
+    # -- writing to the library ------------------------------------------------
     def flush(self) -> bool:
-        """Upload staged pictures, then merge staged information into the library's files."""
-        with self.lock:
-            staged, self._staged = self._staged, {}
-            files, self._staged_files = self._staged_files, []
-        ok = True
-        if files:
+        """Upload staged pictures, then merge staged information into the library's files.
+        Waits for background writes first, so everything staged so far is in the library after."""
+        self.wait()
+        ok = self.write_ok
+        ok &= self.upload_media()
+        ok &= self.write_info()
+        self.write_ok = True
+        return ok
+
+    def flush_async(self, info_systems=()):
+        """Upload the staged pictures in the background, then (if asked) write those systems'
+        information files ('*' = every staged system). Returns at once; wait() to finish."""
+        self._submit(("media", None))
+        if info_systems:
+            self._submit(("info", None if info_systems == "*" else tuple(info_systems)))
+
+    def wait(self):
+        """Block until every background write has been done."""
+        if self._worker is not None:
+            self._work.join()
+
+    def _submit(self, task):
+        self._work.put(task)
+        if self._worker is None or not self._worker.is_alive():
+            self._worker = threading.Thread(target=self._run_work, daemon=True)
+            self._worker.start()
+
+    def _run_work(self):
+        while True:
+            try:
+                kind, arg = self._work.get(timeout=2)
+            except queue.Empty:
+                return
+            try:
+                ok = self.upload_media() if kind == "media" else self.write_info(arg)
+                if not ok:
+                    self.write_ok = False
+            except Exception as ex:  # noqa - keep going; the next flush tries again
+                self.write_ok = False
+                self.lib.error = str(ex)
+            finally:
+                self._work.task_done()
+
+    def upload_media(self) -> bool:
+        """Upload the pictures staged so far (one rclone copy)."""
+        with self._io_lock:
+            with self.lock:
+                files, self._staged_files = self._staged_files, []
+            if not files:
+                return True
             fd, listfile = tempfile.mkstemp(suffix=".txt")
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write("\n".join(sorted(set(files))) + "\n")
@@ -281,30 +331,47 @@ class MetaStore:
             finally:
                 os.unlink(listfile)
             if rc != 0:
-                ok = False
                 self.lib.error = L._last_lines(out)
-            else:
-                for rel in set(files):
-                    try:
-                        (self._stage_dir / rel).unlink()
-                    except OSError:
-                        pass
-        for system, recs in staged.items():
-            loc = self.lib._meta("meta", system + ".json")
-            latest = self.lib._cat_json(loc, {})          # another machine may have added games
-            if not isinstance(latest, dict):
-                latest = {}
-            for k, r in recs.items():
-                cur = latest.get(k, {})
-                merged = dict(cur, **{kk: vv for kk, vv in r.items() if kk not in ("tried", "media")})
-                merged["tried"] = dict(cur.get("tried", {}), **r.get("tried", {}))
-                merged["media"] = dict(cur.get("media", {}), **r.get("media", {}))
-                latest[k] = {kk: vv for kk, vv in merged.items() if vv}
-            if self.lib._put_json(loc, latest):
-                with self.lock:
-                    self.data[system] = dict(self.data.get(system, {}), **latest)
-            else:
-                ok = False
+                with self.lock:                       # try them again at the next upload
+                    self._staged_files = files + self._staged_files
+                return False
+            with self.lock:
+                again = set(self._staged_files)       # staged once more meanwhile: keep for next time
+            for rel in set(files) - again:
+                try:
+                    (self._stage_dir / rel).unlink()
+                except OSError:
+                    pass
+            return True
+
+    def write_info(self, systems=None) -> bool:
+        """Merge the staged information of these systems (None = all) into the library's files.
+        Each system's file is read first, because another machine may have added games."""
+        ok = True
+        with self._io_lock:
+            with self.lock:
+                names = list(self._staged) if systems is None else [x for x in systems if x in self._staged]
+                staged = {x: self._staged.pop(x) for x in names}
+            for system, recs in staged.items():
+                loc = self.lib._meta("meta", system + ".json")
+                latest = self.lib._cat_json(loc, {})
+                if not isinstance(latest, dict):
+                    latest = {}
+                for k, r in recs.items():
+                    cur = latest.get(k, {})
+                    merged = dict(cur, **{kk: vv for kk, vv in r.items() if kk not in ("tried", "media")})
+                    merged["tried"] = dict(cur.get("tried", {}), **r.get("tried", {}))
+                    merged["media"] = dict(cur.get("media", {}), **r.get("media", {}))
+                    latest[k] = {kk: vv for kk, vv in merged.items() if vv}
+                if self.lib._put_json(loc, latest):
+                    with self.lock:
+                        self.data[system] = dict(self.data.get(system, {}), **latest)
+                else:
+                    ok = False
+                    with self.lock:                   # keep them for the next try
+                        again = self._staged.setdefault(system, {})
+                        for k, r in recs.items():
+                            again.setdefault(k, r)
         self._save_local_copy()
         return ok
 
@@ -750,7 +817,10 @@ class ScreenScraperSource:
 class Scraper:
     """Looks up games that have no information yet, source by source, in a background thread.
     progress(done, total, message) is called from that thread."""
-    FLUSH_EVERY = 25
+    FLUSH_EVERY = 25          # games between picture uploads when online sources are in use
+    FLUSH_EVERY_LOCAL = 120   # ... when only ES-DE (pictures already on this machine)
+    UPLOAD_SECONDS = 45       # upload at least this often
+    INFO_SECONDS = 300        # a long system's information file is also saved this often
 
     def __init__(self, store: MetaStore, sources, keys, progress=lambda d, t, m: None, refresh=False):
         self.store = store
@@ -777,7 +847,12 @@ class Scraper:
     def run(self):
         lib = self.store.lib
         todo = [k for k in self.keys if lib.items.get(k) and self._needs(k)]
+        todo.sort(key=lambda k: k.split("/", 1)[0])      # system by system (stable within one)
         total, since_flush = len(todo), 0
+        local_only = all(src.name == "es-de" for src in self.sources)
+        every = self.FLUSH_EVERY_LOCAL if local_only else self.FLUSH_EVERY
+        last_upload = last_info = time.monotonic()
+        system = None
         dead = set()
         self.progress(0, total, f"Looking up {total} game(s)…")
         for i, key in enumerate(todo, 1):
@@ -785,6 +860,11 @@ class Scraper:
                 self.message = "Stopped."
                 break
             item = lib.items[key]
+            sys_now = key.split("/", 1)[0]
+            if system is not None and sys_now != system:
+                self.store.flush_async(info_systems=[system])     # a system is done: save its file once
+                since_flush, last_upload, last_info = 0, time.monotonic(), time.monotonic()
+            system = sys_now
             have = self.store.get(key)
             for src in self.sources:
                 if src.name in dead:
@@ -817,11 +897,19 @@ class Scraper:
                 elif src.name != "es-de":
                     self.store.mark_tried(key, src.name)
             since_flush += 1
-            if since_flush >= self.FLUSH_EVERY:
-                self.store.flush()
-                since_flush = 0
+            now = time.monotonic()
+            if since_flush >= every or now - last_upload >= self.UPLOAD_SECONDS:
+                long_system = now - last_info >= self.INFO_SECONDS
+                self.store.flush_async(info_systems=[system] if long_system else ())
+                since_flush, last_upload = 0, now
+                if long_system:
+                    last_info = now
             self.progress(i, total, f"{item.title}")
-        self.store.flush()
+        self.progress(total, total, "Saving to the library…")
+        self.store.flush_async(info_systems="*")
+        self.store.wait()
+        if not self.store.write_ok:
+            self.store.flush()                                    # one more try, in this thread
         if not self.message:
             self.message = f"Done: information for {sum(1 for k in todo if self.store.has_info(k))} of {total} game(s)."
         self.progress(total, total, self.message)
