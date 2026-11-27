@@ -27,4 +27,13 @@ d.tk.call("wm", "transient", d._w, ""); d.deiconify(); d.geometry("1220x720+0+0"
 for i in d.tree.get_children(): d.tree.item(i, open=True)
 pump(1.5)
 os.system("import -window root -crop 1220x720+0+0 /tmp/bios_vault.png")
+# the explanation line, and Organise's preview
+first = next(i for n in d.tree.get_children() for i in d.tree.get_children(n))
+d.tree.selection_set(first); pump(0.3)
+assert first in d.why.cget("text"), d.why.cget("text")
+d.organise(); pump(0.5)
+dlg = [w for w in d.winfo_children() if isinstance(w, U.OrganiseDialog)]
+assert dlg and dlg[0].v_move.get() is True
+dlg[0].destroy(); pump(0.2)
+assert d.report_btn.winfo_manager() == "pack" and "Report saved" in d.log.get("1.0", "end"), "Open report after an install"
 print("GUI BIOS OK")

@@ -167,7 +167,19 @@ your own cloud drive; dump them from consoles you own.
   (`GC/<USA|EUR|JAP>/IPL.bin`) and EmuDeck's `Emulation/bios` - and shows what is in place.
   **Install** copies what is missing; nothing that is already there is replaced (a different file
   with the same name is reported as a conflict). Unknown and damaged files are never installed.
-  **Remove what the app installed** moves only its own copies to the backup folder.
+  **Remove installed** moves only the app's own copies to the backup folder.
+- **Why a file isn't recognised**: select it to see the reason, e.g. a 512-byte copier header in
+  front of a known file (**Fixable**), the right name and size but a different dump (**Unverified**:
+  installed only where no verified file goes, never over anything), a zip holding BIOS files
+  (**Zip of BIOS**), the wrong size for its name, or the same size as a known file but different
+  contents.
+- **Organise…** shows a preview, then gives every recognised file one tidy place,
+  `<System>/<the name emulators look for>`: duplicates are found, zips of BIOS files unpacked and
+  copier headers removed in a clean copy. Nothing is deleted; optionally the files they came from
+  (and duplicates) move to the backup folder, and other devices move their copies away too when
+  they sync (`.vault_moved.json`). Unknown and damaged files stay where they are.
+- **Install report**: every install writes `bios_install_report.txt` (what went where on this
+  device, and what each emulator still lacks) to `~/.emu_save_manager/logs`; **Open report** opens it.
 - **BIOS that goes beside the games**: some systems are run by MAME, which looks for the system's
   BIOS set in the games folder. For **Game.com**, the vault recognises the internal and external
   ROMs by contents (loose under any name, in a zip, or in a zip inside a zip, as No-Intro packs ship

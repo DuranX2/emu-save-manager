@@ -12,8 +12,10 @@ import biostargets
 import biosvault
 
 STATUS_TEXT = {"verified": "Verified", "identified": "Identified", "side-file": "PCSX2 file",
-               "in-set": "Folder set",
+               "in-set": "Folder set", "unverified": "Unverified", "fixable": "Fixable",
+               "packed": "Zip of BIOS",
                "unknown": "Unknown", "damaged": "Damaged"}
+TO_CHECK = ("damaged", "unknown", "fixable", "packed")
 
 
 class BiosVaultDialog(tk.Toplevel):
@@ -75,6 +77,7 @@ class BiosVaultDialog(tk.Toplevel):
         ttk.Button(bar, text="Add files…", command=self.add_files).pack(side="left")
         ttk.Button(bar, text="Add folder…", command=self.add_folder).pack(side="left", padx=4)
         ttk.Button(bar, text="Move to system…", command=self.move_selected).pack(side="left")
+        ttk.Button(bar, text="Organise…", command=self.organise).pack(side="left", padx=4)
         self.vault_info = ttk.Label(bar, text="", foreground=self.c["dim"])
         self.vault_info.pack(side="right")
         tf = ttk.Frame(left)
@@ -90,13 +93,18 @@ class BiosVaultDialog(tk.Toplevel):
         self.tree.column("what", width=230)
         self.tree.column("status", width=86, stretch=False)
         self.tree.column("size", width=82, anchor="e", stretch=False)
-        for tag, color in (("damaged", self.c["bad"]), ("unknown", self.c["warn"]), ("system", "")):
+        for tag, color in (("damaged", self.c["bad"]), ("unknown", self.c["warn"]), ("fixable", self.c["warn"]),
+                           ("packed", self.c["warn"]), ("unverified", self.c["dim"]), ("system", "")):
             self.tree.tag_configure(tag, foreground=color or None)
         self.tree.tag_configure("system", font=("TkDefaultFont", 10, "bold"))
         sb = ttk.Scrollbar(tf, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=sb.set)
         self.tree.pack(side="left", fill="both", expand=True)
         sb.pack(side="left", fill="y")
+        self.why = ttk.Label(left, text="Select a file to see what it is, or why it isn't recognised.",
+                             foreground=self.c["dim"], wraplength=620, justify="left")
+        self.why.pack(fill="x", pady=(6, 0))
+        self.tree.bind("<<TreeviewSelect>>", self._explain)
 
         right = ttk.LabelFrame(body, text="This device", padding=6)
         right.grid(row=0, column=1, sticky="nsew")
@@ -104,8 +112,12 @@ class BiosVaultDialog(tk.Toplevel):
         bar.pack(fill="x", pady=(0, 6))
         self.install_btn = ttk.Button(bar, text="Install to this device", command=self.install_now)
         self.install_btn.pack(side="left")
-        ttk.Button(bar, text="Preview", command=lambda: self.install_now(dry=True)).pack(side="left", padx=4)
-        ttk.Button(bar, text="Remove what the app installed", command=self.uninstall).pack(side="right")
+        self.preview_btn = ttk.Button(bar, text="Preview", command=lambda: self.install_now(dry=True))
+        self.preview_btn.pack(side="left", padx=4)
+        ttk.Button(bar, text="Remove installed", command=self.uninstall).pack(side="right")
+        self.report_btn = ttk.Button(bar, text="Open report", command=self.open_report)
+        if (biosvault.APP_DIR / "logs" / biostargets.REPORT_NAME).exists():
+            self.report_btn.pack(side="left")
         tf = ttk.Frame(right)
         tf.pack(fill="both", expand=True)
         self.ttree = ttk.Treeview(tf, columns=("state",), show="tree headings", selectmode="browse")
@@ -178,6 +190,8 @@ class BiosVaultDialog(tk.Toplevel):
                 elif msg[0] == "scanned":
                     self.entries, self.targets, stats = msg[1], msg[2], msg[3]
                     self._fill(stats)
+                elif msg[0] == "call":
+                    msg[1]()
                 elif msg[0] == "done":
                     self.busy = False
                     self.configure(cursor="")
@@ -208,7 +222,7 @@ class BiosVaultDialog(tk.Toplevel):
             groups.setdefault(e.system, []).append(e)
         for system in sorted(groups, key=lambda s: (s == biosdb.UNKNOWN, s.lower())):
             items = groups[system]
-            bad = sum(1 for e in items if e.ident.status in ("damaged", "unknown"))
+            bad = sum(1 for e in items if e.ident.status in TO_CHECK)
             node = self.tree.insert("", "end", text=f"{system}  ({len(items)})", open=system in (
                 biosdb.PS2, biosdb.PS1, biosdb.XBOX, biosdb.GC, biosdb.UNKNOWN),
                 values=("", f"{bad} to check" if bad else "", ""), tags=("system",))
@@ -304,6 +318,30 @@ class BiosVaultDialog(tk.Toplevel):
 
         ttk.Button(win, text="Move", command=ok).pack(pady=10)
 
+    def _explain(self, _e=None):
+        sel = [i for i in self.tree.selection() if "/" in i]
+        e = next((x for x in self.entries if sel and x.rel == sel[0]), None)
+        if e is None:
+            return
+        st = STATUS_TEXT.get(e.ident.status, e.ident.status)
+        names = f"  Emulators look for it as: {', '.join(e.ident.names)}." if e.ident.names else ""
+        self.why.config(text=f"{e.rel}\n{st}: {e.ident.label}.{names}")
+
+    def open_report(self):
+        self.app.open_folder(biosvault.APP_DIR / "logs" / biostargets.REPORT_NAME)
+
+    def organise(self):
+        if self.busy:
+            return
+        steps = biosvault.organise_plan(self.vault, self.entries)
+        OrganiseDialog(self, steps)
+
+    def run_organise(self, steps, move):
+        from datetime import datetime
+        dest = (Path(self.app.backup_dir) / "bios_vault_organised" / datetime.now().strftime("%Y-%m-%d_%H-%M-%S")) \
+            if move else None
+        self._run(lambda: biosvault.organise(self.vault, steps, dest, self._write))
+
     def sync_now(self):
         self._run(lambda: biosvault.sync_cloud(self.app.cfg, self._write)
                   and self._write("Vault synced."))
@@ -315,7 +353,13 @@ class BiosVaultDialog(tk.Toplevel):
                 "Only missing files are copied; nothing that is already there is replaced.",
                 parent=self):
             return
-        self._run(lambda: biostargets.install_all(self.entries, self.app.resolve, self._write, dry))
+        def work():
+            res = biostargets.install_all(self.entries, self.app.resolve, self._write, dry,
+                                          report_dir=biosvault.APP_DIR / "logs")
+            if res.get("report"):
+                self._write(f"Report saved: {res['report']}  (Open report)")
+                self.q.put(("call", lambda: self.report_btn.pack(side="left", after=self.preview_btn)))
+        self._run(work)
 
     def uninstall(self):
         if not messagebox.askyesno(
@@ -324,3 +368,58 @@ class BiosVaultDialog(tk.Toplevel):
                 "to the backup folder?\n\nFiles you put there yourself are not touched.", parent=self):
             return
         self._run(lambda: biostargets.uninstall(self.app.backup_dir, self._write))
+
+
+class OrganiseDialog(tk.Toplevel):
+    """What Organise will do, before it does it."""
+    KIND = {"copy": "Copy to", "unpack": "Unpack to", "fix": "Clean copy to", "dup": "Duplicate", "keep": "Leave"}
+
+    def __init__(self, owner, steps):
+        super().__init__(owner)
+        self.owner, self.steps = owner, steps
+        self.title("Organise the vault")
+        self.transient(owner)
+        c = owner.c
+        work = [x for x in steps if x.kind in ("copy", "unpack", "fix")]
+        dups = [x for x in steps if x.kind == "dup"]
+        left = [x for x in steps if x.kind == "keep" and x.src.ident.status in ("unknown", "damaged")]
+        f = ttk.Frame(self, padding=12)
+        f.pack(fill="both", expand=True)
+        ttk.Label(f, text=f"{len(work)} file(s) get a tidy place (<System>/<the name emulators look for>), "
+                          f"{len(dups)} are duplicates or replaced by a clean copy, {len(left)} unknown or "
+                          f"damaged file(s) stay where they are.", wraplength=760).pack(anchor="w")
+        tf = ttk.Frame(f)
+        tf.pack(fill="both", expand=True, pady=8)
+        t = ttk.Treeview(tf, columns=("what", "to"), show="headings", height=16)
+        t.heading("what", text="File")
+        t.heading("to", text="What happens")
+        t.column("what", width=400)
+        t.column("to", width=400)
+        sb = ttk.Scrollbar(tf, orient="vertical", command=t.yview)
+        t.configure(yscrollcommand=sb.set)
+        t.pack(side="left", fill="both", expand=True)
+        sb.pack(side="left", fill="y")
+        for x in work + dups:
+            what = f"{self.KIND[x.kind]} {x.dest}" if x.dest else self.KIND[x.kind] + (f": {x.note}" if x.note else "")
+            if x.dest and x.note:
+                what += f"  ({x.note})"
+            t.insert("", "end", values=(x.src.rel, what))
+        self.v_move = tk.BooleanVar(value=True)
+        ttk.Checkbutton(f, variable=self.v_move,
+                        text="Move the files they came from (and the duplicates) out of the vault, into the "
+                             "backup folder. Other devices move their copies away too when they sync.").pack(anchor="w")
+        ttk.Label(f, text="Nothing is deleted. Untick to only add the tidy copies.",
+                  foreground=c["dim"]).pack(anchor="w")
+        b = ttk.Frame(f)
+        b.pack(fill="x", pady=(8, 0))
+        ttk.Button(b, text="Cancel", command=self.destroy).pack(side="right")
+        self.ok_btn = ttk.Button(b, text="Organise", command=self.ok)
+        self.ok_btn.pack(side="right", padx=6)
+        if not work and not dups:
+            self.ok_btn.state(["disabled"])
+        self.bind("<Escape>", lambda e: self.destroy())
+
+    def ok(self):
+        steps, move = self.steps, self.v_move.get()
+        self.destroy()
+        self.owner.run_organise(steps, move)

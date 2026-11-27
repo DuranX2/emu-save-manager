@@ -21,7 +21,7 @@ from typing import List, Optional, Tuple
 from biosdb_data import DB, SOURCE_VERSION  # noqa: F401  (SOURCE_VERSION shown in the UI)
 
 # Bump when identification rules change, so cached results are recomputed.
-RULES_VERSION = 2
+RULES_VERSION = 3          # 3: diagnose() - reasons, unverified, fixable
 
 PS1 = "Sony - PlayStation"
 PS2 = "Sony - PlayStation 2"
@@ -60,7 +60,7 @@ class Identity:
 
     @property
     def installable(self) -> bool:
-        return self.status in ("verified", "identified", "side-file")
+        return self.status in ("verified", "identified", "side-file", "unverified")
 
 
 def md5_of(data: bytes) -> str:
@@ -187,4 +187,80 @@ def identify(data: bytes, filename: str = "", hint_system: str = "") -> Identity
         return Identity(GC, "GameCube IPL (not on libretro's list)", "identified", h, size)
     if re.search(r"\[b\d*\]", low):
         return Identity(hint_system or UNKNOWN, "named as a bad dump [b]", "damaged", h, size)
-    return Identity(hint_system or UNKNOWN, "not on any fingerprint list", "unknown", h, size)
+    return diagnose(data, filename, hint_system, h)
+
+
+# ---------------------------------------------------------------------------
+# Files no fingerprint matches: why, and what can still be done
+# ---------------------------------------------------------------------------
+NDSI = "Nintendo - Nintendo DSi"
+# Emulators that accept other versions of a file under the same name (sizes they take)
+ALT_SIZES = {"tos.img": (196608, 262144, 524288)}            # Hatari: TOS 1.x (192 KB), 2.x, 4.x
+# Files an emulator needs that libretro's list has no fingerprint for (system, sizes, label)
+EXTRA_NAMES = {
+    "bios7i.bin": (NDSI, (65536,), "DSi ARM7 BIOS (melonDS)"),
+    "bios9i.bin": (NDSI, (65536,), "DSi ARM9 BIOS (melonDS)"),
+    "dsi_firmware.bin": (NDSI, (131072, 262144), "DSi firmware (melonDS)"),
+}
+COPIER_HEADER = 512
+_NAME_INDEX: dict = {}
+
+
+def _names():
+    """file name (lower case, no folder) -> [(system, name as cores expect it, size, md5)]"""
+    if not _NAME_INDEX:
+        for md5, (system, names, size) in DB.items():
+            for n in names:
+                _NAME_INDEX.setdefault(os.path.basename(n).lower(), []).append((system, n, size, md5))
+    return _NAME_INDEX
+
+
+def _kb(n: int) -> str:
+    return f"{n // 1024:,} KB" if n >= 1024 and n % 1024 == 0 else f"{n:,} bytes"
+
+
+def diagnose(data: bytes, filename: str = "", hint_system: str = "", h: str = None) -> Identity:
+    """For a file no fingerprint matches: the reason in plain words, and what can still be done.
+    'fixable': a copier header hides a known file (Organise makes a clean copy).
+    'unverified': the right name and size for a file an emulator needs, but not the dump on
+    libretro's list (often another version); installed only where no verified file goes."""
+    h = h or md5_of(data)
+    size = len(data)
+    base = os.path.basename(filename)
+    low = base.lower()
+    if size > COPIER_HEADER and size % 1024 == COPIER_HEADER:
+        known = DB.get(md5_of(data[COPIER_HEADER:]))
+        if known:
+            system, names, _sz = known
+            return Identity(system, f"{os.path.basename(names[0])} with a 512-byte header from a copier tool "
+                                    f"in front: Organise makes a clean copy", "fixable", h, size, (),
+                            extra={"fix": "strip-header", "fixed_md5": md5_of(data[COPIER_HEADER:]),
+                                   "fixed_names": list(names)})
+    if low == "firmware.bin" and size in (131072, 262144, 524288):
+        return Identity(NDS, "DS firmware (holds the console's own settings, so it never matches a list)",
+                        "identified", h, size, ("firmware.bin",))
+    if low in EXTRA_NAMES:
+        system, sizes, label = EXTRA_NAMES[low]
+        if size in sizes:
+            return Identity(system, f"{label}: libretro's list has no fingerprint for it; right name and size",
+                            "unverified", h, size, (low,))
+        return Identity(system, f"Named like the {label} but {_kb(size)}; it should be {_kb(sizes[0])}",
+                        "unknown", h, size)
+    same_name = _names().get(low, [])
+    if same_name:
+        system, name, want, _md5 = same_name[0]
+        sizes = {x[2] for x in same_name} | set(ALT_SIZES.get(low, ()))
+        if size in sizes:
+            return Identity(system, f"Right name and size for {base}, but not the dump on libretro's list "
+                                    f"(often another version, or a modified copy). Used only where no verified "
+                                    f"file goes", "unverified", h, size, (name,))
+        return Identity(system, f"Named like {base} ({system}) but {_kb(size)}; that file is {_kb(want)}. "
+                                f"Probably a different file, or a bad copy", "unknown", h, size)
+    if hint_system:
+        same_size = sorted({os.path.basename(v[1][0]) for v in DB.values() if v[0] == hint_system and v[2] == size})
+        if same_size:
+            return Identity(hint_system, f"Same size as {', '.join(same_size[:3])} but different contents: another "
+                                         f"version, a modified copy or a bad dump. Renaming it won't help",
+                            "unknown", h, size)
+    return Identity(hint_system or UNKNOWN, "Not on libretro's list and its name doesn't match any BIOS an "
+                                           "emulator looks for. It may not be a BIOS at all", "unknown", h, size)

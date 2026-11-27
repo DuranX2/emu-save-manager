@@ -273,11 +273,20 @@ def plan(target: Target, entries) -> List[tuple]:
 
     def retroarch_files(folder: Path):
         for e in entries:
-            if "/" in e.sub and e.system != biosdb.UNKNOWN and e.ident.status != "damaged":
+            if "/" in e.sub and e.system != biosdb.UNKNOWN and e.ident.status in ("verified", "identified", "in-set",
+                                                                                    "unverified"):
                 out.append((e, folder / e.sub))           # folder sets: dc/, Machines/, np2/ ...
             if e.ident.status in ("verified", "identified") and e.ident.names:
                 for n in e.ident.names:
                     out.append((e, folder / n))
+        taken = {str(d).lower() for _e, d in out}
+        for e in entries:                                 # right name and size, not on the list:
+            if e.ident.status == "unverified" and e.ident.names:   # only where nothing verified goes
+                for n in e.ident.names:
+                    d = folder / n
+                    if str(d).lower() not in taken:
+                        taken.add(str(d).lower())
+                        out.append((e, d))
 
     def xemu_files_into(folder: Path, wanted: dict):
         mcpx = next((e for e in entries if e.system == biosdb.XBOX and e.ident.status == "verified"
@@ -373,6 +382,8 @@ def status_of(target: Target, entries) -> dict:
             state = {"ok": "present", "missing": "missing"}.get(chk, "conflict")
         elif not d.exists():
             state = "missing"
+        elif e.ident.status == "unverified":
+            state = "present"                  # something's there already; an unverified file never replaces it
         else:
             state = "present" if _md5_file(d) == e.ident.md5 else "conflict"
         counts[state] += 1
@@ -424,18 +435,47 @@ def install(target: Target, entries, log=print, dry=False) -> dict:
     return counts
 
 
-def install_all(entries, resolve=None, log=print, dry=False) -> dict:
+REPORT_NAME = "bios_install_report.txt"
+
+
+def install_all(entries, resolve=None, log=print, dry=False, report_dir=None) -> dict:
+    """Install into every target. With report_dir, a report of what went where (and what each
+    emulator still lacks) is written there as bios_install_report.txt; total["report"] is its path."""
     total = {"installed": 0, "present": 0, "conflict": 0, "failed": 0}
+    lines = []
+
+    def both(text):
+        lines.append(text)
+        log(text)
+
     targets = find_targets(resolve)
     if not targets:
-        log("No emulator BIOS folders were found on this device.")
+        both("No emulator BIOS folders were found on this device.")
     for t in targets:
-        log(f"{t.name}: {t.folder}")
-        c = install(t, entries, log, dry)
+        both(f"{t.name}: {t.folder}")
+        c = install(t, entries, both, dry)
         for k in total:
             total[k] += c[k]
-    log(f"BIOS install: {total['installed']} installed, {total['present']} already in place, "
-        f"{total['conflict']} conflicts, {total['failed']} failed.")
+        st = status_of(t, entries)
+        n = st["present"] + st["missing"] + st["conflict"]
+        lines.append(f"  in place: {st['present']} of {n}" + (" (preview: nothing was copied)" if dry else ""))
+        for note in coverage(t, entries):
+            lines.append(f"  still missing: {note}")
+        lines.append("")
+    both(f"BIOS install: {total['installed']} installed, {total['present']} already in place, "
+         f"{total['conflict']} conflicts, {total['failed']} failed.")
+    if report_dir:
+        import platform
+        from datetime import datetime as _dt
+        path = Path(report_dir) / REPORT_NAME
+        head = [f"BIOS install report - {platform.node() or 'this device'} - {_dt.now():%Y-%m-%d %H:%M}",
+                f"Vault files: {len(entries)}", ""]
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("\n".join(head + lines) + "\n", encoding="utf-8")
+            total["report"] = str(path)
+        except OSError:
+            pass
     return total
 
 

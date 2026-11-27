@@ -23,9 +23,12 @@ import re
 import os
 import shutil
 import zipfile
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List
+
+from dataclasses import dataclass
 
 import biosdb
 import cloudsync as cs
@@ -161,7 +164,7 @@ def scan(vault: Path) -> List[VaultEntry]:
             fresh[key] = dict(c, names=list(c["names"]))
             if kind == "flat":                 # the system comes from what the file is
                 system = ident.system if ident.status != "unknown" else (FLAT_SET if "/" in sub else biosdb.UNKNOWN)
-            if ident.status == "unknown" and "/" in sub:
+            if ident.status in ("unknown", "unverified") and "/" in sub and not ident.names:
                 # a member of a folder set an emulator core needs as-is (dc/, Machines/ ...)
                 ident = biosdb.Identity(ident.system, "kept with its folder set",
                                         "in-set", ident.md5, ident.size, ident.names, ident.region)
@@ -171,13 +174,37 @@ def scan(vault: Path) -> List[VaultEntry]:
 
 
 def identify(data: bytes, name: str, hint_system: str = "") -> biosdb.Identity:
-    """libretro's list first; then the sets MAME wants beside the games (Game.com)."""
+    """libretro's list first; then the sets MAME wants beside the games (Game.com); then a zip
+    that holds BIOS files ('packed': Organise unpacks it)."""
     ident = biosdb.identify(data, name, hint_system)
     if ident.status == "unknown":
         g = gamebios.identify(name, data)
         if g:
             return g
+        if name.lower().endswith(".zip") and data[:4] == b"PK\x03\x04":
+            inside = packed_contents(data)
+            if inside:
+                labels = sorted({i.label for _n, _r, _d, i in inside})
+                more = f" and {len(labels) - 3} more" if len(labels) > 3 else ""
+                return biosdb.Identity(inside[0][3].system,
+                                       f"A zip holding {len(inside)} BIOS file(s) ({', '.join(labels[:3])}{more}): "
+                                       f"Organise unpacks them", "packed", ident.md5, ident.size)
     return ident
+
+
+def packed_contents(data: bytes):
+    """[(name, path inside, bytes, identity)] of the BIOS files a zip holds (zips inside it too)."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            members = _zip_members(z)
+    except (zipfile.BadZipFile, RuntimeError, NotImplementedError, OSError):
+        return []
+    out = []
+    for n, r, d in members:
+        i = biosdb.identify(d, n)
+        if i.status in ("verified", "identified"):
+            out.append((n, r, d, i))
+    return out
 
 
 def scan_any(folder):
@@ -346,6 +373,197 @@ def add(vault: Path, paths, log=print) -> dict:
     return counts
 
 
+# ---------------------------------------------------------------------------
+# Organise: one tidy <System>/<name> layout
+# ---------------------------------------------------------------------------
+MOVED_FILE = ".vault_moved.json"       # {old path in the vault: md5}: applied on every device
+
+
+@dataclass
+class Step:
+    kind: str           # "copy" (to its tidy place), "unpack" (from a zip), "fix" (clean copy), "dup", "keep"
+    src: "VaultEntry"
+    dest: str = ""      # tidy path in the vault ("" for dup/keep)
+    note: str = ""
+    data: bytes = None  # for unpack / fix
+
+
+def _tidy_name(e) -> str:
+    """Where a recognised file belongs: <system>/<the name its emulator looks for>."""
+    i = e.ident
+    if i.status == "side-file" or e.system in (biosdb.PS2, biosdb.XBOX) or not i.names:
+        return f"{i.system}/{e.path.name}"            # PS2 / Xbox: names chosen by the user matter
+    n = i.names[0]
+    if i.system == biosdb.PS1:
+        n = os.path.basename(n)
+    return f"{i.system}/{n}"
+
+
+def organise_plan(vault: Path, entries=None) -> List[Step]:
+    """What Organise would do. Recognised files get one place each, <System>/<name>; zips holding
+    BIOS files are unpacked; copier headers are removed in a clean copy. Folder sets keep their
+    folders; unknown and damaged files stay where they are."""
+    entries = scan(vault) if entries is None else entries
+    known = _systems()
+    at = {e.rel: e for e in entries}
+    want: Dict[str, str] = {}                        # tidy path -> md5 already claimed
+    for e in entries:
+        want.setdefault(e.rel, e.ident.md5)
+    steps: List[Step] = []
+
+    def claim(dest, md5) -> str:
+        """The tidy path for md5: dest, or dest (2)... if another file has that name."""
+        stem, ext = os.path.splitext(dest)
+        n = 2
+        while dest in want and want[dest] != md5:
+            dest = f"{stem} ({n}){ext}"
+            n += 1
+        new = dest not in want
+        want[dest] = md5
+        return dest if new else ""
+
+    for e in sorted(entries, key=lambda x: (x.ident.status != "verified", x.rel)):
+        st, kind = e.ident.status, _layout(e.rel, known)[0]
+        if st in ("unknown", "damaged"):
+            steps.append(Step("keep", e, note=e.ident.label))
+            continue
+        if st == "in-set" or (st == "unverified" and "/" in e.sub and not e.rel.startswith(e.ident.system + "/")):
+            if kind == "system" and e.rel.split("/")[0] not in known and " - " not in e.rel.split("/")[0]:
+                dest = f"{e.system}/{e.sub}"                # out of a grouping folder
+                d = claim(dest, e.ident.md5)
+                steps.append(Step("copy", e, d, "folder set") if d else Step("dup", e, note=f"also at {dest}"))
+            elif kind == "flat" and any(x is not e and x.sub == e.sub and x.ident.md5 == e.ident.md5
+                                        for x in entries):
+                steps.append(Step("dup", e, note="the same folder set is elsewhere in the vault"))
+            else:
+                steps.append(Step("keep", e, note="folder set"))
+            continue
+        if st == "packed":
+            inside = packed_contents(e.path.read_bytes())
+            for n, r, d, i in inside:
+                tmp = VaultEntry(e.path, f"{i.system}/{n}", i.system, i)
+                dest = claim(_tidy_name(tmp), i.md5)
+                if dest:
+                    steps.append(Step("unpack", e, dest, f"{r} from the zip", d))
+            steps.append(Step("dup", e, note=f"unpacked ({len(inside)} file(s))"))
+            continue
+        if st == "fixable":
+            data = e.path.read_bytes()[biosdb.COPIER_HEADER:]
+            fixed = biosdb.identify(data, os.path.basename(e.ident.extra.get("fixed_names", [e.path.name])[0]))
+            dest = claim(_tidy_name(VaultEntry(e.path, "", fixed.system, fixed)), fixed.md5)
+            if dest:
+                steps.append(Step("fix", e, dest, "the 512-byte copier header removed", data))
+            steps.append(Step("dup", e, note="a clean copy replaces it"))
+            continue
+        dest = _tidy_name(e)
+        if dest == e.rel:
+            steps.append(Step("keep", e, note="already tidy"))
+            continue
+        d = claim(dest, e.ident.md5)
+        if d:
+            steps.append(Step("copy", e, d))
+        else:
+            steps.append(Step("dup", e, note=f"already at {dest}" if want.get(dest) == e.ident.md5 else ""))
+    return steps
+
+
+def organise(vault: Path, steps: List[Step], move_originals_to: Path = None, log=print) -> dict:
+    """Carry out a plan. Nothing is deleted: copies are added, and the files they came from stay,
+    unless move_originals_to is given, in which case those files (and duplicates) are moved there
+    and listed in .vault_moved.json, so other devices move their copies away too when they sync."""
+    counts = {"copied": 0, "unpacked": 0, "fixed": 0, "moved": 0, "failed": 0}
+    done_src = set()
+    for st in steps:
+        if st.kind not in ("copy", "unpack", "fix"):
+            continue
+        dest = vault / st.dest
+        try:
+            data = st.data if st.data is not None else st.src.path.read_bytes()
+            if dest.exists():
+                if biosdb.md5_of(dest.read_bytes()) != biosdb.md5_of(data):
+                    log(f"  {st.dest} already holds a different file - left alone")
+                    counts["failed"] += 1
+                continue
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            tmp = dest.with_name(dest.name + ".part")
+            tmp.write_bytes(data)
+            if biosdb.md5_of(tmp.read_bytes()) != biosdb.md5_of(data):
+                raise OSError("the copy didn't read back the same")
+            os.replace(tmp, dest)
+            counts[{"copy": "copied", "unpack": "unpacked", "fix": "fixed"}[st.kind]] += 1
+            done_src.add(st.src.rel)
+            log(f"  {st.src.rel}  ->  {st.dest}" + (f"  ({st.note})" if st.note else ""))
+        except OSError as ex:
+            counts["failed"] += 1
+            log(f"  {st.src.rel}: couldn't copy ({ex})")
+    if move_originals_to:
+        failed_src = {st.src.rel for st in steps if st.kind in ("copy", "unpack", "fix")} - done_src
+        movable = [st.src for st in steps if st.kind in ("copy", "unpack", "fix", "dup")
+                   and st.src.rel not in failed_src]
+        moved = {}
+        for e in {x.rel: x for x in movable}.values():
+            if not e.path.exists():
+                continue
+            dst = Path(move_originals_to) / e.rel
+            try:
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(e.path), str(dst))
+                moved[e.rel] = e.ident.md5
+                counts["moved"] += 1
+            except OSError as ex:
+                log(f"  {e.rel}: couldn't move it ({ex})")
+        if moved:
+            _note_moved(vault, moved)
+            _remove_empty_dirs(vault)
+            log(f"  {len(moved)} original(s) moved to {move_originals_to}")
+    log(f"Organise: {counts['copied']} copied, {counts['unpacked']} unpacked, {counts['fixed']} cleaned, "
+        f"{counts['moved']} original(s) moved out, {counts['failed']} problem(s).")
+    return counts
+
+
+def _note_moved(vault: Path, moved: dict):
+    path = vault / MOVED_FILE
+    try:
+        old = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        old = {}
+    old.update(moved)
+    path.write_text(json.dumps(old, indent=1, sort_keys=True), encoding="utf-8")
+
+
+def _remove_empty_dirs(vault: Path):
+    """Folders Organise emptied (only empty ones: rmdir refuses anything else)."""
+    for d in sorted((p for p in vault.rglob("*") if p.is_dir()), key=lambda p: -len(p.parts)):
+        try:
+            d.rmdir()
+        except OSError:
+            pass
+
+
+def apply_moved(vault: Path, backup: Path, log=print) -> list:
+    """Move away this device's copies of files Organise moved out on another device (only if they
+    are still the same file), so a sync doesn't bring them back. Returns the paths moved."""
+    try:
+        moved = json.loads((vault / MOVED_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    out = []
+    for rel, md5 in moved.items():
+        p = vault / rel
+        if p.is_file() and biosdb.md5_of(p.read_bytes()) == md5:
+            dst = Path(backup) / rel
+            try:
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(p), str(dst))
+                out.append(rel)
+            except OSError:
+                pass
+    if out:
+        _remove_empty_dirs(vault)
+        log(f"Moved {len(out)} file(s) that were tidied away on another device to {backup}")
+    return out
+
+
 def move_to_system(vault: Path, rel: str, system: str) -> str:
     """Assign a file to a system by moving it into that system's folder."""
     src = vault / rel
@@ -382,5 +600,15 @@ def sync_cloud(cfg: dict, log=print, dry=False, runner=None) -> bool:
     down = cs.sync_pair(runner, "download", vault, rpath, dry, backup)
     if down == "failed":
         return False
+    if not dry:
+        gone = apply_moved(vault, Path(cfg.get("backup_dir") or APP_DIR / "backups") / "bios_vault_tidied" / stamp, log)
+        if gone:                     # the cloud's copies go to a backup folder there (moved, not deleted)
+            fd, lst = tempfile.mkstemp(prefix="esm_moved_", suffix=".txt")
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write("\n".join(gone) + "\n")
+            try:
+                runner.run(["move", rpath, f"{rpath.rstrip('/')}-tidied/{stamp}", "--files-from", lst])
+            finally:
+                os.unlink(lst)
     up = cs.sync_pair(runner, "upload", vault, rpath, dry, None)
     return up != "failed"
