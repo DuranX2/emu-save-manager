@@ -159,13 +159,20 @@ class MetaStore:
     # -- reading -------------------------------------------------------------
     def load(self):
         """Read every system's information file from the library (small JSON files)."""
-        rc, out = self.lib.runner.capture(["lsf", "--files-only", self.lib._meta("meta")], merge=False)
-        names = [n for n in out.splitlines() if n.endswith(".json")] if rc == 0 else []
+        # one rclone command for every system's file (one connection), not one per system
+        tmp = Path(tempfile.mkdtemp(prefix="romlib-meta-"))
         data = {}
-        for n in names:
-            d = self.lib._cat_json(self.lib._meta("meta", n), {})
-            if isinstance(d, dict):
-                data[n[:-5]] = d
+        try:
+            rc, _out = self.lib.runner.capture(["copy", self.lib._meta("meta"), str(tmp),
+                                                "--include", "*.json", "--max-depth", "1"], timeout=600)
+            if rc != 0:
+                return
+            for f in sorted(tmp.glob("*.json")):
+                d = L._read_json(f, {})
+                if isinstance(d, dict):
+                    data[f.stem] = d
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
         with self.lock:
             self.data = data
         self._save_local_copy()

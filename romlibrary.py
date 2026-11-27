@@ -291,8 +291,12 @@ def join(location: str, *parts: str) -> str:
 
 def list_library(runner, location: str):
     """Every file in the library -> [(path, size, mtime, is_dir)].  Raises RuntimeError on failure."""
-    rc, out = runner.capture(["lsjson", "-R", "--files-only", "--no-mimetype", "--fast-list",
-                              location], timeout=3600, merge=False)
+    for wait in (5, 15, None):                # the share was briefly full: wait and try again
+        rc, out = runner.capture(["lsjson", "-R", "--files-only", "--no-mimetype", "--fast-list",
+                                  location], timeout=3600, merge=False)
+        if rc == 0 or TOO_MANY not in (out or "") or wait is None:
+            break
+        time.sleep(wait)
     if rc != 0:
         raise RuntimeError(_last_lines(out) or f"rclone exited with {rc}")
     try:
@@ -319,9 +323,38 @@ def _mtime(s: str) -> float:
         return 0.0
 
 
+TOO_MANY = "maximum number of connections"
+
+
+def _is_listing(line: str) -> bool:
+    """A line of rclone's JSON listing (it lands in the error text when a listing fails half-way)."""
+    t = line.strip()
+    return t.startswith(("{", "[", "]", ",{")) or t in (",", "")
+
+
 def _last_lines(text: str, n=3) -> str:
-    lines = [l for l in (text or "").strip().splitlines() if l.strip()]
-    return " / ".join(lines[-n:])
+    lines = []
+    for l in (text or "").strip().splitlines():
+        if _is_listing(l):
+            # a JSON object can run straight into rclone's log line: keep what follows the last '}'
+            if "}" in l and l.rstrip()[-1:] not in ("}", ",", "]"):
+                l = l[l.rindex("}") + 1:]
+            else:
+                continue
+        if l.strip():
+            lines.append(l.strip())
+    msg = " / ".join(lines[-n:])
+    if TOO_MANY in msg:
+        msg = explain_too_many()
+    return msg
+
+
+def explain_too_many() -> str:
+    return ("The computer sharing the library refused another connection (\"maximum number of "
+            "connections\").\n\nOn that computer, check the share's user limit: right-click the shared "
+            "folder > Properties > Sharing > Advanced Sharing > \"Limit the number of simultaneous users "
+            "to\". Set it to the highest number allowed (20 on Windows 10/11), or in PowerShell as "
+            "administrator:  Set-SmbShare -Name <share> -ConcurrentUserLimit 0 -Force")
 
 
 def list_local(root: Path):

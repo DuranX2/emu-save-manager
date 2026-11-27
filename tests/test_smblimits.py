@@ -106,5 +106,38 @@ assert peak == L.SHARE_COMMANDS == 3, peak
 free = cloudsync.RcloneRunner("rclone", "", lambda m: None)
 assert free.gate is None, "cloud sync isn't limited"
 print(f"7. 10 commands at once: at most {peak} ran together; cloud sync isn't limited: ok")
+# 8. the error text: no JSON listing in it, and "maximum number of connections" explained
+shot = ('{"Path":"psp/cps1psp/Roms/willow.zip","Name":"willow.zip","Size":1773820,"IsDir":false},\n'
+        '{"Path":"psp/cps1psp/Roms/wof.zip","Name":"wof.zip","Size":3927125,"IsDir":false}'
+        '2026/11/26 21:58:15 ERROR : .library: error listing: couldn\'t initialize SMB: No more connections '
+        'can be made to this remote computer at this time because the computer has already accepted the '
+        'maximum number of connections.\n2026/11/26 21:58:35 NOTICE: Failed to lsjson with 2 errors')
+msg = L._last_lines(shot)
+assert "Path" not in msg and "Set-SmbShare" in msg and "Limit the number of simultaneous users" in msg, msg
+other = '[\n{"Path":"a","Size":1},\n2026/11/26 ERROR : x: directory not found\n'
+assert L._last_lines(other) == "2026/11/26 ERROR : x: directory not found", L._last_lines(other)
+print("8. errors: JSON listing dropped; 'maximum number of connections' points at the share's user limit: ok")
+
+# 9. a full share: the listing waits and tries again
+class Busy:
+    calls = 0
+    def capture(self, args, **kw):
+        Busy.calls += 1
+        if Busy.calls < 3:
+            return 1, "ERROR : couldn't initialize SMB: ... accepted the maximum number of connections."
+        return 0, '[{"Path":"snes/a.sfc","Size":5,"ModTime":"2024-01-01T00:00:00Z","IsDir":false}]'
+L.time.sleep = lambda s: None
+got = L.list_library(Busy(), "romlibrary:Games")
+assert Busy.calls == 3 and len(got) == 1, (Busy.calls, got)
+class Down:
+    calls = 0
+    def capture(self, args, **kw):
+        Down.calls += 1
+        return 1, "ERROR : couldn't connect SMB: connection refused"
+try:
+    L.list_library(Down(), "romlibrary:Games"); assert False
+except RuntimeError as ex:
+    assert Down.calls == 1 and "connection refused" in str(ex), (Down.calls, ex)
+print("9. a full share is retried twice; other errors fail at once: ok")
 shutil.rmtree(T, ignore_errors=True)
 print("test_smblimits OK")
