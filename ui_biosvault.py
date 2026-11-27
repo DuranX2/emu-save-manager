@@ -57,6 +57,10 @@ class BiosVaultDialog(tk.Toplevel):
         ttk.Button(top, text="Open", command=lambda: self.app.open_folder(self.vault)).pack(side="left", padx=4)
         self.sync_btn = ttk.Button(top, text="Sync vault with cloud", command=self.sync_now)
         self.sync_btn.pack(side="right")
+        ttk.Button(top, text="Change…", command=self.change_cloud_folder).pack(side="right", padx=(4, 10))
+        self.cloud_label = ttk.Label(top, text="")
+        self.cloud_label.pack(side="right")
+        self._show_cloud()
 
         body = ttk.Frame(self, padding=(10, 4))
         body.pack(fill="both", expand=True)
@@ -125,7 +129,7 @@ class BiosVaultDialog(tk.Toplevel):
         ttk.Checkbutton(opts, text="Install new BIOS files into emulators automatically",
                         variable=self.v_auto, command=self._save_opts).pack(side="left", padx=16)
         ttk.Label(self, text="Only your own files: the vault never downloads BIOS files from anywhere "
-                             "except your own cloud drive (folder \"Emulator BIOS Vault\"). Files are "
+                             "except your own cloud drive (the cloud folder above). Files are "
                              "identified by content; unknown or damaged files are kept but never installed. "
                              "Nothing in an emulator folder is overwritten. BIOS sets MAME looks for beside the games "
                              "(Game.com's gamecom.zip) are installed into the games folders.",
@@ -233,13 +237,38 @@ class BiosVaultDialog(tk.Toplevel):
                                   values=("",))
 
     # ---- actions ---------------------------------------------------------------------------
+    def _show_cloud(self):
+        self.cloud_label.config(text=f"Cloud folder: {biosvault.cloud_folder(self.app.cfg)}")
+
     def change_vault(self):
         d = filedialog.askdirectory(parent=self, title="Choose the vault folder",
                                     initialdir=str(self.vault))
         if d:
             self.vcfg["folder"] = d
+            same = biosvault.cloud_folder_for(Path(d))
+            if same and same != biosvault.cloud_folder(self.app.cfg) and messagebox.askyesno(
+                    "Cloud folder",
+                    f"This folder is in your cloud drive's folder on this computer.\n\n"
+                    f"Sync the vault with \"{same}\" on the cloud drive (the same folder), so other "
+                    f"devices use this one copy? (Otherwise it's also copied to "
+                    f"\"{biosvault.CLOUD_FOLDER}\".)", parent=self):
+                self.vcfg["cloud_folder"] = same
             self.app.save_cfg()
+            self._show_cloud()
             self.refresh()
+
+    def change_cloud_folder(self):
+        from tkinter import simpledialog
+        f = simpledialog.askstring(
+            "Cloud folder",
+            "The vault's folder on your cloud drive (the same on every device), for example\n"
+            f"Emudeck/BIOS. Leave it empty for \"{biosvault.CLOUD_FOLDER}\".",
+            initialvalue=biosvault.cloud_folder(self.app.cfg), parent=self)
+        if f is None:
+            return
+        self.vcfg["cloud_folder"] = f.strip().strip("/\\")
+        self.app.save_cfg()
+        self._show_cloud()
 
     def _add(self, paths):
         if paths:
