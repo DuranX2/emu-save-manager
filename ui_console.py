@@ -195,6 +195,8 @@ class ConsoleBase(tk.Frame):
     def act(self, action):
         if not self.running:
             return
+        # the right stick moves like the mouse wheel does here; LT is A (the item's menu)
+        action = {"scroll_up": "up", "scroll_down": "down", "context": "ok"}.get(action, action)
         if self.overlay is not None:
             self.overlay.act(action)
             return

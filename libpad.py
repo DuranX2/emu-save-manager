@@ -8,6 +8,9 @@
   B                back to the systems list
   X                select several games (move, then X on each)
   LB / RB          previous / next system, from anywhere
+  LT               games: the game's actions (as A, and as a right-click) · systems: the system's
+                   actions (look up its artwork, leave it out of artwork look-ups, Check-up, BIOS)
+  Right stick      scroll the games or the systems list (the cursor stays where it is)
   Y                the Library's menu: Refresh, Check-up, BIOS, Artwork, Settings, Show filter,
                    covers / list
   View             covers / list
@@ -20,7 +23,7 @@ import mainpad
 
 
 class LibraryPad(mainpad.PadBase):
-    HINTS = {"systems": "A games · LB/RB system · Y menu",
+    HINTS = {"systems": "A games · LT system menu · Y menu",
              "games": "A actions · X select · Y menu"}
 
     def __init__(self, app, backend="auto"):
@@ -164,6 +167,15 @@ class LibraryPad(mainpad.PadBase):
         if keys:
             self.open_menu(self._menu_title(keys), self.game_items(keys))
 
+    def _context(self):
+        if self.zone == "games":
+            self._ok()
+            return
+        s = self.app.system_sel
+        items = system_items(self.app, s)
+        if items:
+            self.open_menu(system_title(s), items)
+
     def _mark(self):
         if self.zone != "games":
             return
@@ -214,47 +226,92 @@ class LibraryPad(mainpad.PadBase):
 
     # ---- menus ---------------------------------------------------------------------------
     def _menu_title(self, keys):
-        lib = self.app.lib
-        if len(keys) == 1:
-            return lib.get(keys[0]).title
-        return f"{len(keys)} games"
+        return game_title(self.app, keys)
 
     def game_items(self, keys):
-        a, lib = self.app, self.app.lib
-        sts = {lib.status(k)[0] for k in keys}
-        items = []
-        if sts & {"not_here", "partial"}:
-            items.append(("⬇ Check out", a.check_out))
-        if sts & {"here", "partial"}:
-            items.append(("⬆ Check in", a.check_in))
-        if "local_only" in sts:
-            items.append(("Add to library", a.add_to_library))
-        if any(k in lib.items for k in keys):
-            fav = all(lib.is_favourite(k) for k in keys)
-            items.append(("☆ Unfavourite" if fav else "★ Favourite", a.toggle_favourite))
-        if len(keys) == 1:
-            items.append(("Details…", a.show_details))
-            if a.can_match():
-                def match(key=keys[0]):
-                    import ui_covers
-                    ui_covers.MatchDialog(a, key)
-                items.append(("Wrong artwork? Find the right game…", match))
-        return items
+        return game_items(self.app, keys)
 
     def library_items(self):
-        import ui_library as U
-        a = self.app
-        items = [("Refresh", a.refresh), ("Check-up…", a.open_checkup), ("BIOS…", a.open_bios),
-                 ("Artwork…", a.open_artwork), ("Settings…", a.open_settings),
-                 ("List view" if a.view == "covers" else "Covers view", self._view)]
-        if a.v_search.get():
-            items.append(("Clear the search", lambda: a.v_search.set("")))
-        for f in U.FILTERS:
-            mark = "● " if a.v_filter.get() == f else "    "
-            items.append((f"{mark}Show: {f}", lambda f=f: self._filter(f)))
-        return items
+        items = library_items(self.app)
+        return [(t, self._view if f == "view" else (lambda f=f[1]: self._filter(f)) if isinstance(f, tuple) else f)
+                for t, f in items]
 
     def _filter(self, f):
         a = self.app
         a.v_filter.set(f)
         a.fill_games()
+
+
+# ---------------------------------------------------------------------------
+# The menus (shared by A / LT / Y and the right-click menus in ui_library)
+# ---------------------------------------------------------------------------
+def game_title(app, keys):
+    if len(keys) == 1:
+        return app.lib.get(keys[0]).title
+    return f"{len(keys)} games"
+
+
+def game_items(app, keys):
+    """[(label, function)] for the selected games."""
+    a, lib = app, app.lib
+    sts = {lib.status(k)[0] for k in keys}
+    items = []
+    if sts & {"not_here", "partial"}:
+        items.append(("⬇ Check out", a.check_out))
+    if sts & {"here", "partial"}:
+        items.append(("⬆ Check in", a.check_in))
+    if "local_only" in sts:
+        items.append(("Add to library", a.add_to_library))
+    if any(k in lib.items for k in keys):
+        fav = all(lib.is_favourite(k) for k in keys)
+        items.append(("☆ Unfavourite" if fav else "★ Favourite", a.toggle_favourite))
+    if len(keys) == 1:
+        key = keys[0]
+        items.append(("Details…", a.show_details))
+        if a.can_match():
+            def match(key=key):
+                import ui_covers
+                ui_covers.MatchDialog(a, key)
+            items.append(("Wrong artwork? Find the right game…", match))
+        if key in lib.items and getattr(a, "meta", None) is not None:
+            items.append(("Use my own cover picture…", lambda: a.choose_picture(key, "cover")))
+            items.append(("Use my own screenshot…", lambda: a.choose_picture(key, "screenshot")))
+    return items
+
+
+def system_title(system):
+    import romlibrary as L
+    return L.system_name(system)
+
+
+def system_items(app, system):
+    """[(label, function)] for one system in the systems list (none for "All systems")."""
+    import ui_library as U
+    if not app.lib or system == U.ALL:
+        return []
+    name = system_title(system)
+    items = []
+    if getattr(app, "meta", None) is not None:
+        items.append((f"Look up artwork for {name}", lambda: app.scrape_system(system)))
+        if system in app.scrape_skip():
+            items.append((f"Include {name} in artwork look-ups again", lambda: app.toggle_scrape_skip(system)))
+        else:
+            items.append((f"Leave {name} out of artwork look-ups", lambda: app.toggle_scrape_skip(system)))
+    items.append(("Check-up…", app.open_checkup))
+    items.append(("BIOS…", app.open_bios))
+    return items
+
+
+def library_items(app):
+    """The Y menu. "view" and ("filter", name) are filled in by the pad."""
+    import ui_library as U
+    a = app
+    items = [("Refresh", a.refresh), ("Check-up…", a.open_checkup), ("BIOS…", a.open_bios),
+             ("Artwork…", a.open_artwork), ("Settings…", a.open_settings),
+             ("List view" if a.view == "covers" else "Covers view", "view")]
+    if a.v_search.get():
+        items.append(("Clear the search", lambda: a.v_search.set("")))
+    for f in U.FILTERS:
+        mark = "● " if a.v_filter.get() == f else "    "
+        items.append((f"{mark}Show: {f}", ("filter", f)))
+    return items

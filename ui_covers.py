@@ -120,6 +120,8 @@ class CoverGrid(ttk.Frame):
             c.bind(key, lambda e, d=d: self._move(d, e))
         c.bind("<Return>", lambda e: self.app.on_grid_double())
         c.bind("<Control-a>", lambda e: self.set_selection(list(self.keys)))
+        import mainpad
+        mainpad.register_scroll(c, self._scroll_units)          # the right stick, like the wheel
         self._d = None
 
     # -- data ---------------------------------------------------------------
@@ -421,9 +423,13 @@ class DetailsPanel(ttk.Frame):
             names = {"es-de": "ES-DE", "screenscraper": "ScreenScraper", "libretro": "libretro thumbnails",
                      "manual": "ScreenScraper (picked by hand)"}
             self._label(f"Information from {names.get(src, src)}", foreground=apptheme.DIM, font=("TkDefaultFont", 8)).pack(pady=(8, 0))
+        row = ttk.Frame(self.inner)
+        row.pack(anchor="w", pady=(6, 10))
         if app.can_match():
-            ttk.Button(self.inner, text="Wrong game? Find the right one…",
-                       command=lambda: MatchDialog(app, key)).pack(anchor="w", pady=(6, 10))
+            ttk.Button(row, text="Wrong game? Find the right one…",
+                       command=lambda: MatchDialog(app, key)).pack(side="left", padx=(0, 6))
+        if key in app.lib.items and getattr(app, "meta", None) is not None:
+            ttk.Button(row, text="Choose cover…", command=lambda: app.choose_picture(key, "cover")).pack(side="left")
 
     def _buttons(self, keys):
         app, lib = self.app, self.app.lib
@@ -507,6 +513,13 @@ class ArtworkDialog(tk.Toplevel):
         if app.selected():
             ttk.Radiobutton(sc, text=f"The {len(app.selected())} selected", variable=self.v_scope,
                             value="selected").pack(side="left", padx=10)
+        skip = ttk.Frame(f)
+        skip.grid(row=r, column=0, columnspan=3, sticky="w", pady=(4, 0)); r += 1
+        ttk.Label(skip, text="Left out of \"All games\":").pack(side="left")
+        self.skip_label = ttk.Label(skip, text="", foreground=apptheme.DIM, wraplength=360)
+        self.skip_label.pack(side="left", padx=6)
+        ttk.Button(skip, text="Choose systems…", command=self.choose_skip).pack(side="left")
+        self._show_skip()
         ttk.Checkbutton(f, text="Look up again even if a game already has information", variable=self.v_refresh).grid(
             row=r, column=0, columnspan=3, sticky="w"); r += 1
         self.progress = ttk.Progressbar(f, maximum=100)
@@ -529,9 +542,24 @@ class ArtworkDialog(tk.Toplevel):
 
     def _save(self):
         M.save_ss_creds(self._creds())
-        self.app.cfg["artwork"] = {"esde": self.v_esde.get(), "screenscraper": self.v_ss.get(),
-                                   "libretro": self.v_lr.get()}
+        self.app.cfg.setdefault("artwork", {}).update(
+            {"esde": self.v_esde.get(), "screenscraper": self.v_ss.get(), "libretro": self.v_lr.get()})
         L.save_config(self.app.cfg)
+
+    def _show_skip(self):
+        skip = sorted(self.app.scrape_skip(), key=L.system_name)
+        text = ", ".join(L.system_name(x) for x in skip[:6]) + (f" and {len(skip) - 6} more" if len(skip) > 6 else "")
+        self.skip_label.config(text=text or "nothing")
+
+    def choose_skip(self):
+        systems = sorted({it.system for it in self.app.lib.items.values()}, key=L.system_name)
+        d = SystemPicker(self, systems, self.app.scrape_skip(), title="Leave out of artwork look-ups",
+                         text="These systems are skipped when looking up all games. You can still look one "
+                              "up on its own (right-click it, or LT on a controller).")
+        self.wait_window(d)
+        if d.result is not None:
+            self.app.set_scrape_skip(d.result)
+            self._show_skip()
 
     def test(self):
         creds = self._creds()
@@ -558,7 +586,8 @@ class ArtworkDialog(tk.Toplevel):
         elif scope == "system":
             keys = [k for k in app.lib.items if app.lib.items[k].system == app.system_sel]
         else:
-            keys = list(app.lib.items)
+            skip = app.scrape_skip()
+            keys = [k for k, it in app.lib.items.items() if it.system not in skip]
         app.start_scrape(keys, esde=self.v_esde.get(), ss=self.v_ss.get(), lr=self.v_lr.get(),
                          refresh=self.v_refresh.get())
         self.sync_buttons()
@@ -577,6 +606,55 @@ class ArtworkDialog(tk.Toplevel):
     def close(self):
         self._save()
         self.app.artwork_dialog = None
+        self.destroy()
+
+
+class SystemPicker(tk.Toplevel):
+    """Tick systems in a list (click, Space, or A on a controller toggles one); result: the set, or None."""
+
+    def __init__(self, master, systems, chosen, title="Systems", text=""):
+        super().__init__(master)
+        self.title(title)
+        self.transient(master)
+        self.systems = list(systems)
+        self.result = None
+        f = ttk.Frame(self, padding=12)
+        f.pack(fill="both", expand=True)
+        if text:
+            ttk.Label(f, text=text, wraplength=380, foreground=apptheme.DIM).pack(anchor="w", pady=(0, 6))
+        box = ttk.Frame(f)
+        box.pack(fill="both", expand=True)
+        self.lb = tk.Listbox(box, selectmode="multiple", height=min(16, max(4, len(systems))), width=40,
+                             exportselection=False, activestyle="dotbox")
+        sb = ttk.Scrollbar(box, orient="vertical", command=self.lb.yview)
+        self.lb.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        self.lb.pack(side="left", fill="both", expand=True)
+        for i, s in enumerate(self.systems):
+            self.lb.insert("end", L.system_name(s))
+            if s in chosen:
+                self.lb.selection_set(i)
+        self.lb.bind("<Return>", self._toggle)                 # A on a controller
+        b = ttk.Frame(f)
+        b.pack(fill="x", pady=(8, 0))
+        ttk.Button(b, text="Cancel", command=self.destroy).pack(side="right")
+        ttk.Button(b, text="OK", command=self.ok).pack(side="right", padx=(0, 6))
+        ttk.Button(b, text="None", command=lambda: self.lb.selection_clear(0, "end")).pack(side="left")
+        self.bind("<Escape>", lambda e: self.destroy())
+        self.lb.focus_set()
+        if self.systems:
+            self.lb.activate(0)
+
+    def _toggle(self, _e=None):
+        i = self.lb.index("active")
+        if self.lb.selection_includes(i):
+            self.lb.selection_clear(i)
+        else:
+            self.lb.selection_set(i)
+        return "break"
+
+    def ok(self):
+        self.result = {self.systems[i] for i in self.lb.curselection()}
         self.destroy()
 
 

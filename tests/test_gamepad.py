@@ -74,4 +74,36 @@ assert got == ["ok", "ok"]
 assert nav._on_key(Key("F2")) == "break" and got[-1] == "view"
 assert nav._on_key(Key("z")) is None
 print("3. held directions repeat, buttons don't, and a key + button pair counts once: ok")
+
+# 4. the right stick scrolls and LT is "context" (XInput, and the joystick API with its guards)
+import struct as _st
+assert G.xinput_held(0, 0, 0, 30000, 0) == {"scroll_up"}
+assert G.xinput_held(0, 0, 0, -30000, 0) == {"scroll_down"}
+assert G.xinput_held(0, 0, 0, 5000, 100) == set()             # small push, light trigger
+assert G.xinput_held(0, 0, 0, 0, 200) == {"context"}
+H = G.joystick_held
+assert H({}, {4: -30000}, centred={4}) == {"scroll_up"} and H({}, {4: 30000}, centred={4}) == {"scroll_down"}
+assert H({}, {4: -32767}, centred=set()) == set(), "an axis never seen centred (a trigger at rest) doesn't scroll"
+assert H({}, {2: -32767}, rest_low={2}) == set() and H({}, {2: 20000}, rest_low={2}) == {"context"}
+assert H({}, {2: 20000}, rest_low=set()) == set(), "a stick on the trigger's axis doesn't open menus"
+assert H({}, {3: -30000}, roles={"ry": 3}, centred={3}) == {"scroll_up"}, "the driver's axis map decides"
+# through a real joystick event stream: init events (trigger at rest), then the stick and LT
+r_fd, w_fd = os.pipe()
+be = G.JoystickBackend(pattern="/nonexistent/js*")
+be.add_fd(r_fd)
+ev = lambda num, val, kind: _st.pack("<IhBB", 0, val, kind, num)
+os.write(w_fd, ev(2, -32767, 0x82) + ev(4, 0, 0x82))                 # JS_INIT | JS_AXIS
+assert be.poll() == set()
+os.write(w_fd, ev(4, -32000, 0x02))
+assert be.poll() == {"scroll_up"}
+os.write(w_fd, ev(4, 0, 0x02) + ev(2, 32000, 0x02))
+assert be.poll() == {"context"}
+be.close(); os.close(w_fd)
+# scrolling repeats sooner and faster than the D-pad
+got.clear()
+for t in (30.0, 30.10, 30.15, 30.20, 30.26, 30.31):
+    nav.press({"scroll_down"}, now=t)
+nav.press(set(), now=30.4)
+assert got.count("scroll_down") == 4, got
+print("4. right stick scrolls, LT is the context button, with guards for other axis layouts: ok")
 print("test_gamepad OK")

@@ -6,10 +6,11 @@ gamepad.py - controller and keyboard navigation for Tk windows, with no extra pa
     controls (and other pads) as an Xbox-style controller to programs it starts.
   * Keyboard: arrows, Enter/Space, Escape/Backspace, X (mark), Tab/Menu (menu),
     Q/E or Page Up/Down (previous/next), F2 (switch view).
+  * Right stick up/down scrolls (scroll_up / scroll_down); LT is "context", like a right-click.
 
 Everything becomes one of these actions, sent to a callback on the Tk thread:
-    up down left right ok back mark menu prev next view
-Directions repeat while held. The same action from two sources within a moment (Steam can
+    up down left right ok back mark menu prev next view scroll_up scroll_down context
+Directions and scrolling repeat while held. The same action from two sources within a moment (Steam can
 send both a key and a button for one press) counts once.
 """
 from __future__ import annotations
@@ -22,9 +23,12 @@ import sys
 import time
 import weakref
 
-ACTIONS = ("up", "down", "left", "right", "ok", "back", "mark", "menu", "prev", "next", "view")
-REPEATING = {"up", "down", "left", "right"}
+ACTIONS = ("up", "down", "left", "right", "ok", "back", "mark", "menu", "prev", "next", "view",
+           "scroll_up", "scroll_down", "context")
+REPEATING = {"up", "down", "left", "right", "scroll_up", "scroll_down"}
 REPEAT_DELAY, REPEAT_EVERY = 0.38, 0.11
+REPEAT_TIMES = {"scroll_up": (0.14, 0.05), "scroll_down": (0.14, 0.05)}   # scrolling: sooner and faster
+TRIGGER_ON = 0.5
 DEDUPE = 0.09
 POLL_MS = 16
 AXIS_ON = 0.55
@@ -66,9 +70,15 @@ XI_BUTTONS = {0x0001: "up", 0x0002: "down", 0x0004: "left", 0x0008: "right",
               0x1000: "ok", 0x2000: "back", 0x4000: "mark", 0x8000: "menu"}
 
 
-def xinput_held(buttons: int, lx: int, ly: int) -> set:
+def xinput_held(buttons: int, lx: int, ly: int, ry: int = 0, lt: int = 0) -> set:
     held = {a for bit, a in XI_BUTTONS.items() if buttons & bit}
     lim = int(32767 * AXIS_ON)
+    if ry > lim:
+        held.add("scroll_up")
+    elif ry < -lim:
+        held.add("scroll_down")
+    if lt > 255 * TRIGGER_ON:
+        held.add("context")
     if lx < -lim:
         held.add("left")
     elif lx > lim:
@@ -119,7 +129,7 @@ class XInputBackend:
                 continue
             self.seen.add(pad)
             g = self.state.Gamepad
-            held |= xinput_held(g.wButtons, g.sThumbLX, g.sThumbLY)
+            held |= xinput_held(g.wButtons, g.sThumbLX, g.sThumbLY, g.sThumbRY, g.bLeftTrigger)
         return held
 
     def present(self) -> bool:
@@ -137,8 +147,35 @@ JS_BUTTON_MAP = {0: "ok", 1: "back", 2: "mark", 3: "menu", 4: "prev", 5: "next",
                  6: "menu", 7: "view", 11: "left", 12: "right", 13: "up", 14: "down"}
 
 
-def joystick_held(buttons: dict, axes: dict, button_map=None) -> set:
+# The driver's axis codes (linux/input-event-codes.h) -> what they are, for the right stick and LT
+ABS_RY, ABS_Z, ABS_BRAKE = 0x04, 0x02, 0x0a
+JSIOCGAXMAP = 0x80406a32                         # _IOR('j', 0x32, __u8[ABS_CNT = 64])
+DEFAULT_ROLES = {"ry": 4, "lt": 2}               # the Xbox-style layout, when the driver can't say
+
+
+def axis_roles(fd) -> dict:
+    """Which axis numbers are the right stick's Y and the left trigger on this device."""
+    try:
+        import fcntl
+        buf = bytearray(64)
+        fcntl.ioctl(fd, JSIOCGAXMAP, buf, True)
+    except (ImportError, OSError):
+        return dict(DEFAULT_ROLES)
+    roles = {}
+    for num, code in enumerate(buf):
+        if code == ABS_RY and "ry" not in roles:
+            roles["ry"] = num
+        elif code in (ABS_Z, ABS_BRAKE) and "lt" not in roles:
+            roles["lt"] = num
+    return roles
+
+
+def joystick_held(buttons: dict, axes: dict, button_map=None, roles=None, centred=None, rest_low=None) -> set:
+    """centred: the axes seen near the middle; only those scroll (so a trigger resting at one end
+    can't scroll on its own). rest_low: the axes that started at the low end, like a trigger at
+    rest; only those count as LT (so a stick can't open menus)."""
     bm = JS_BUTTON_MAP if button_map is None else button_map
+    roles = DEFAULT_ROLES if roles is None else roles
     held = {bm[b] for b, v in buttons.items() if v and b in bm}
     lim = int(32767 * AXIS_ON)
     for xa, ya in ((0, 1), (6, 7)):          # left stick, D-pad (hat)
@@ -151,6 +188,17 @@ def joystick_held(buttons: dict, axes: dict, button_map=None) -> set:
             held.add("up")
         elif y > lim:
             held.add("down")
+    ra = roles.get("ry")
+    if ra is not None and (centred is None or ra in centred):
+        ry = axes.get(ra, 0)
+        if ry < -lim:
+            held.add("scroll_up")
+        elif ry > lim:
+            held.add("scroll_down")
+    ta = roles.get("lt")                        # a trigger rests at -32767 and goes to +32767
+    if ta is not None and ta in axes and axes[ta] > -32767 + int(65534 * TRIGGER_ON):
+        if rest_low is None or ta in rest_low:
+            held.add("context")
     return held
 
 
@@ -174,19 +222,19 @@ class JoystickBackend:
                 fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
             except OSError:
                 continue
-            self.devs[path] = [fd, {}, {}]
+            self.devs[path] = [fd, {}, {}, axis_roles(fd), set(), set()]
 
-    def add_fd(self, fd, key="test"):
+    def add_fd(self, fd, key="test", roles=None):
         """For tests: read events from an already open file descriptor."""
         os.set_blocking(fd, False)
-        self.devs[key] = [fd, {}, {}]
+        self.devs[key] = [fd, {}, {}, dict(DEFAULT_ROLES) if roles is None else roles, set(), set()]
 
     def poll(self) -> set:
         if time.monotonic() >= self.next_scan:
             self._scan()
         held = set()
         for path, dev in list(self.devs.items()):
-            fd, buttons, axes = dev
+            fd, buttons, axes, roles, centred, rest_low = dev
             try:
                 while True:
                     data = os.read(fd, JS_EVENT.size * 32)
@@ -198,6 +246,10 @@ class JoystickBackend:
                             buttons[num] = value
                         elif kind & JS_AXIS:
                             axes[num] = value
+                            if abs(value) < 32767 * AXIS_ON / 2:
+                                centred.add(num)
+                            if kind & JS_INIT and value < -30000:
+                                rest_low.add(num)
             except BlockingIOError:
                 pass
             except OSError:                     # unplugged
@@ -207,7 +259,7 @@ class JoystickBackend:
                     pass
                 del self.devs[path]
                 continue
-            held |= joystick_held(buttons, axes)
+            held |= joystick_held(buttons, axes, roles=roles, centred=centred, rest_low=rest_low)
         return held
 
     def present(self) -> bool:
@@ -287,7 +339,8 @@ class Navigator:
         for a in held & self.held:
             if a in REPEATING:
                 t0, last = self.since.get(a, (now, now))
-                if now - t0 >= REPEAT_DELAY and now - last >= REPEAT_EVERY:
+                delay, every = REPEAT_TIMES.get(a, (REPEAT_DELAY, REPEAT_EVERY))
+                if now - t0 >= delay and now - last >= every:
                     self.since[a] = (t0, now)
                     self.router.emit(a, "pad", repeat=True)
         for a in self.held - held:

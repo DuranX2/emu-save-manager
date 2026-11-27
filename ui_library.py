@@ -319,6 +319,7 @@ class LibraryApp(tk.Tk):
         ssb.pack(side="right", fill="y")
         self.sys_tree.pack(side="left", fill="both", expand=True)
         self.sys_tree.bind("<<TreeviewSelect>>", self._on_system)
+        self.sys_tree.bind("<Button-3>", self._system_context)
         TouchScroll(self.sys_tree)
         pane.add(left, weight=1)
 
@@ -340,8 +341,10 @@ class LibraryApp(tk.Tk):
         self.tree.pack(side="left", fill="both", expand=True)
         self.tree.bind("<<TreeviewSelect>>", lambda e: self._update_selection())
         self.tree.bind("<Double-1>", lambda e: self.show_details())
+        self.tree.bind("<Button-3>", self._games_context)
         self.games_touch = TouchScroll(self.tree)
         self.grid_view = C.CoverGrid(right, self, self.tile_w)
+        self.grid_view.canvas.bind("<Button-3>", self._games_context)
         pane.add(right, weight=4)
         self.details_w = 300 if self.compact else 340
         self.details = C.DetailsPanel(pane, self, width=self.details_w)
@@ -491,6 +494,126 @@ class LibraryApp(tk.Tk):
             self.artwork_dialog.lift()
             return
         C.ArtworkDialog(self)
+
+    # ------------------------------------------------------------------ right-click menus
+    def popup(self, event, items, title=""):
+        """A right-click menu of [(label, function)] at the mouse."""
+        if not items:
+            return None
+        m = tk.Menu(self, tearoff=False, background=apptheme.PANEL, foreground=apptheme.TEXT,
+                    activebackground=apptheme.ACCENT_DARK, activeforeground="#ffffff",
+                    disabledforeground=apptheme.DIM, relief="flat", borderwidth=1)
+        if title:
+            m.add_command(label=title, state="disabled")
+            m.add_separator()
+        for label, func in items:
+            m.add_command(label=label, command=func)
+        try:
+            m.tk_popup(event.x_root, event.y_root)
+        finally:
+            m.grab_release()
+        return m
+
+    def _games_context(self, event):
+        """Right-click on a game: select it (unless it's already among the selected), then its menu."""
+        import libpad
+        if not self.lib:
+            return "break"
+        if self.view == "covers":
+            g = self.grid_view
+            key = g._tile_at(event.x, event.y)
+            if key is None:
+                return "break"
+            if key not in g.sel:
+                g.set_selection([key])
+            g.anchor = key
+            self.on_grid_select()
+        else:
+            key = self.tree.identify_row(event.y)
+            if not key:
+                return "break"
+            if key not in self.tree.selection():
+                self.tree.selection_set(key)
+            self.tree.focus(key)
+        keys = self.selected()
+        if keys:
+            self.popup(event, libpad.game_items(self, keys), libpad.game_title(self, keys))
+        return "break"
+
+    def _system_context(self, event):
+        import libpad
+        row = self.sys_tree.identify_row(event.y)
+        if not row:
+            return "break"
+        if row not in self.sys_tree.selection():
+            self.sys_tree.selection_set(row)
+            self._on_system()
+        self.popup(event, libpad.system_items(self, row), libpad.system_title(row) if row != ALL else "")
+        return "break"
+
+    # ------------------------------------------------------------------ artwork
+    def scrape_skip(self) -> set:
+        """Systems left out when looking up artwork for all games."""
+        return set(self.cfg.get("artwork", {}).get("skip_systems", []))
+
+    def set_scrape_skip(self, systems):
+        self.cfg.setdefault("artwork", {})["skip_systems"] = sorted(set(systems))
+        L.save_config(self.cfg)
+
+    def toggle_scrape_skip(self, system):
+        skip = self.scrape_skip()
+        skip ^= {system}
+        self.set_scrape_skip(skip)
+        name = L.system_name(system)
+        self.set_status(f"{name} is left out of artwork look-ups for all games." if system in skip
+                        else f"{name} is included in artwork look-ups again.")
+
+    def scrape_system(self, system):
+        """Look up what's missing for one system, with the sources chosen in Artwork…"""
+        if self.scraping():
+            self.set_status("Artwork is already being looked up; wait for it or stop it in Artwork…")
+            return
+        cfg = self.cfg.get("artwork", {})
+        keys = [k for k, it in self.lib.items.items() if it.system == system]
+        self.start_scrape(keys, esde=cfg.get("esde", True), ss=cfg.get("screenscraper", True),
+                          lr=cfg.get("libretro", True))
+
+    def choose_picture(self, key, kind="cover"):
+        """Use a picture file from this machine as a game's cover (or screenshot), for every machine."""
+        it = self.lib.get(key) if self.lib else None
+        if not it or not self.meta:
+            return
+        what = "cover" if kind == "cover" else "screenshot"
+        path = filedialog.askopenfilename(
+            parent=self, title=f"Choose a {what} picture for {it.title}",
+            filetypes=[("Pictures", "*.png *.jpg *.jpeg *.webp *.bmp *.gif"), ("All files", "*.*")])
+        if not path:
+            return
+        try:
+            data = Path(path).read_bytes()
+        except OSError as ex:
+            messagebox.showerror(APP_NAME, f"Couldn't read the picture: {ex}", parent=self)
+            return
+        if M.normalise_image(data, kind)[0] is None:
+            messagebox.showerror(APP_NAME, "That file isn't a picture this app can read.", parent=self)
+            return
+        self.set_status(f"Saving the new {what} for {it.title}…")
+
+        def work():
+            mine = sorted(set(self.meta.get(key).get("custom", [])) | {kind})
+            self.meta.put(key, {"custom": mine}, {kind: data}, replace=True)   # only "custom" and the picture
+            self.meta.flush_async(info_systems=[it.system])
+            self.meta.wait()
+            ok = self.meta.write_ok
+
+            def done():
+                self.images.forget(key)
+                self.refresh_meta_views([key])
+                self.set_status(f"New {what} saved for {it.title}." if ok else
+                                f"The new {what} shows here; it couldn't be saved to the library yet "
+                                "(it will be with the next artwork save).")
+            self.events.put(("call", done))
+        threading.Thread(target=work, daemon=True).start()
 
     def scraping(self):
         return bool(self.scraper and self.scraper.thread and self.scraper.thread.is_alive())

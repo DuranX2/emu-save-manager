@@ -29,7 +29,7 @@ Keep all `.py` files in this folder together and run:
 | `ps2icon.py` | PS2 save icons: `icon.sys`, the 3D icon format, and a Pillow renderer - no GUI |
 | `gamepad.py` | controller (XInput / Linux joystick) and keyboard navigation for Tk windows |
 | `mainpad.py` | controller navigation for the main window, its questions and other windows (Y opens an action menu) |
-| `libpad.py` | controller navigation for the ROM Library window (covers or list, systems, game actions, Y menu) |
+| `libpad.py` | controller navigation for the ROM Library window (covers or list, systems, game actions, Y menu), and the game / system menus shared with right-click |
 | `cloudsync.py` | rclone wrapper using EmuDeck's folder layout, incl. EmuDeck Cloud - no GUI |
 | `ui_cloud.py` | Cloud Sync window |
 | `biosdb.py`, `biosdb_data.py` | identify BIOS files by content (PS2 version record, libretro fingerprints) - no GUI |
@@ -357,6 +357,19 @@ its `--rom-library` launch option or its name).
 
   Everything found is stored once in the library's `.library` folder (covers shrunk to a sensible
   size), so every machine shows the same artwork. Only artwork and text are downloaded, never games.
+  - **Your own pictures:** right-click a game (or **LT** / **A** on a controller) ▸ **Use my own cover
+    picture…** or **…screenshot…**, or **Choose cover…** in the details panel. The picture is stored in
+    the library like the rest, and later look-ups (even "look up again") leave it alone.
+  - **Leaving systems out:** right-click a system (or **LT** on it) ▸ **Leave … out of artwork
+    look-ups**, or **Artwork… ▸ Choose systems…**. "All games" then skips them; looking up that one
+    system on its own (right-click ▸ **Look up artwork for …**) still works.
+- **Right-click menus.** A game's menu has the same actions as **A** on a controller (check out / in,
+  favourite, details, artwork); a system's menu looks up its artwork, leaves it out of look-ups, and
+  opens the Check-up and BIOS.
+- **Controller:** D-pad / left stick move, **A** a game's actions, **X** select several, **LB / RB**
+  system, **Y** the Library's menu, **View** covers / list, **LT** the right-click menu (a game's
+  actions, or the system's menu on the systems list), **right stick** scrolls without moving the
+  cursor. The right stick scrolls lists and text in the Save Manager's windows too.
 
 ## Updates
 Once a day the app asks GitHub for the latest release (only the version number and release notes

@@ -914,6 +914,8 @@ class Scraper:
                     rec, pics = res
                     if not need_cover:
                         pics.pop("cover", None)
+                    for kind in have.get("custom", []):          # pictures chosen by hand stay
+                        pics.pop(kind, None)
                     self.store.put(key, dict(rec, tried={src.name: int(time.time())}), pics)
                     have = self.store.get(key)
                 elif src.name != "es-de":

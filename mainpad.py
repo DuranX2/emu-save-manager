@@ -11,6 +11,7 @@ main window the same: no extra packages, the same XInput / joystick backends.
   Y (menu)       an action menu: sync, back up, restore, Save History, Cloud Sync, the managers …
   LB / RB        previous / next emulator, from anywhere
   View           group saves by game on / off
+  Right stick    scroll the focused list, text or covers up / down (in any of the app's windows)
 
 The app's other windows and questions (backup note, "Restore … Continue?") work too: the
 D-pad moves between their buttons and fields, A presses, B cancels. A window with its own
@@ -133,6 +134,9 @@ class PadBase:
     def act(self, action):
         top = focus_window(self.app)
         if top is None:
+            return
+        if action in ("scroll_up", "scroll_down"):
+            scroll_window(self.app, top, -1 if action == "scroll_up" else 1)
             return
         if top != str(self.app):
             dialog_action(self.app, top, action)
@@ -311,6 +315,85 @@ def visible_rows(tree):
 
 
 # ---------------------------------------------------------------------------
+# Scrolling (the right stick)
+# ---------------------------------------------------------------------------
+SCROLLABLE = {"Text", "Listbox", "Treeview", "Canvas"}
+SCROLL_UNITS = {"Text": 3, "Listbox": 3, "Treeview": 3, "Canvas": 1}
+SCROLLERS = {}            # widget path -> function(step); for widgets that draw as they scroll
+
+
+def register_scroll(widget, func):
+    """Scroll `widget` with func(step) (step -1 up, 1 down) instead of a plain yview."""
+    SCROLLERS[str(widget)] = func
+
+
+def _is_scroller(call, w, cls) -> bool:
+    """A widget that scrolls (whether or not its content fits right now)."""
+    if w in SCROLLERS:
+        return True
+    if cls not in SCROLLABLE:
+        return False
+    return cls != "Canvas" or bool(str(call(w, "cget", "-scrollregion")))   # else a drawing
+
+
+def _can_scroll(call, w, cls) -> bool:
+    """A scrolling widget whose content doesn't fit, so scrolling moves it."""
+    if not _is_scroller(call, w, cls):
+        return False
+    if w in SCROLLERS:
+        return True
+    try:
+        first, last = (float(x) for x in call(w, "yview"))
+    except (tk.TclError, ValueError):
+        return False
+    return (first, last) != (0.0, 1.0)
+
+
+def _scroll(call, w, step):
+    if w in SCROLLERS:
+        SCROLLERS[w](step)
+    else:
+        cls = str(call("winfo", "class", w))
+        call(w, "yview", "scroll", step * SCROLL_UNITS.get(cls, 1), "units")
+
+
+def scroll_window(app, top: str, step: int) -> bool:
+    """Scroll what has focus in window `top` (or the widget it's inside); failing that, the largest
+    scrolling area in the window. The selection doesn't move. True if something scrolled."""
+    call = app.tk.call
+    try:
+        w = focus_path(app)
+        while w and str(call("winfo", "toplevel", w)) == top:
+            if _is_scroller(call, w, str(call("winfo", "class", w))):
+                _scroll(call, w, step)                # a list that fits just doesn't move
+                return True
+            if w == top:
+                break
+            w = str(call("winfo", "parent", w))
+        best, area = "", 0
+        queue = [top]
+        while queue:
+            w = queue.pop(0)
+            try:
+                if str(call("winfo", "viewable", w)) != "1":
+                    continue
+                if _can_scroll(call, w, str(call("winfo", "class", w))):
+                    a = int(call("winfo", "width", w)) * int(call("winfo", "height", w))
+                    if a > area:
+                        best, area = w, a
+                queue.extend(str(c) for c in call("winfo", "children", w)
+                             if str(call("winfo", "toplevel", c)) == top)
+            except tk.TclError:
+                continue
+        if best:
+            _scroll(call, best, step)
+            return True
+    except tk.TclError:
+        pass                                          # the window went away meanwhile
+    return False
+
+
+# ---------------------------------------------------------------------------
 # Other windows and questions
 # ---------------------------------------------------------------------------
 FOCUSABLE = {"Button", "TButton", "Checkbutton", "TCheckbutton", "Radiobutton", "TRadiobutton",
@@ -437,7 +520,7 @@ class ActionMenu(tk.Frame):
             _t, func = self.items[self.index()]
             self.close()
             func()
-        elif action in ("back", "menu"):
+        elif action in ("back", "menu", "context"):
             self.close()
 
     def close(self):
