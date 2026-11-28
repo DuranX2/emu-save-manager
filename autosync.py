@@ -441,6 +441,9 @@ def sync_from_config(cfg: dict, profiles: dict, resolve, log, mode="both", dry=F
     exe = (cs.usable_rclone(c.get("rclone", ""), log, conf=c.get("config", ""), remote=c.get("remote", ""))
            if c.get("remote") else "")
     conf, remote = c.get("config", ""), c.get("remote", "")
+    if remote and (not conf or not Path(conf).is_file() or remote not in dict(cs.list_remotes(conf))):
+        conf = cs.find_config("")                        # e.g. EmuDeck's file was reset: the app's own copy
+    conf = cs.adopt_config(conf, remote)
     base = c.get("base") or cs.DEFAULT_BASE
     if not exe or not Path(exe).is_file() or not remote:
         log("Cloud Sync is not set up yet (open Cloud Sync in the app first).")

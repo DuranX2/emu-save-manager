@@ -285,6 +285,11 @@ class CloudSyncDialog(tk.Toplevel):
             self.v_rclone.set(cs.find_rclone(cur))
         if not self.v_conf.get() or not Path(self.v_conf.get()).is_file():
             self.v_conf.set(cs.find_config(self.v_conf.get()))
+        remote = self.cfg.get("remote", "")
+        own = str(cs.own_config_path())
+        if (remote and remote not in dict(cs.list_remotes(self.v_conf.get()))
+                and remote in dict(cs.list_remotes(own))):
+            self.v_conf.set(own)                         # the saved file lost the remote: use our copy
         self._reload_remotes()
         if not self.v_rclone.get():
             self._log_now("rclone was not found. Use 'Download rclone', or install it from rclone.org "
@@ -617,6 +622,9 @@ class CloudSyncDialog(tk.Toplevel):
             self._save()
 
     def _save(self):
+        own = cs.adopt_config(self.v_conf.get(), self.v_remote.get())   # independent of EmuDeck's file
+        if own != self.v_conf.get():
+            self.v_conf.set(own)
         self.cfg.update({"rclone": self.v_rclone.get(), "config": self.v_conf.get(),
                          "remote": self.v_remote.get(), "base": self.v_base.get().strip() or cs.DEFAULT_BASE})
         self.cfg["pairs"] = {k: {"sub": p["sub"], "enabled": p["enabled"]} for k, p in self.pairs.items()}
