@@ -33,6 +33,26 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
+
+
+def _import_tkinter(tries=40, wait=0.5):
+    """Windows: right after an update, Setup or the virus scanner can still have Tk's DLLs open
+    for a moment ("being used by another process"), so the first start failed. Wait it out."""
+    for n in range(tries):
+        try:
+            import tkinter  # noqa: F401
+            return
+        except ImportError as ex:
+            text = str(ex).lower()
+            if n == tries - 1 or not ("being used by another process" in text or "access is denied" in text):
+                raise
+            for m in [m for m in sys.modules if m == "tkinter" or m.startswith("tkinter.") or m == "_tkinter"]:
+                sys.modules.pop(m, None)
+            time.sleep(wait)
+
+
+_import_tkinter()
 import tkinter as tk
 import tkinter.font as tkfont
 import zipfile
