@@ -46,7 +46,7 @@ assert "Connected to onedrive" in d.conn_label.cget("text"), d.conn_label.cget("
 d.state("normal"); d.geometry("1280x760+0+0"); pump(0.8)        # Deck screen minus the taskbar
 lines = d.log.winfo_height() // max(1, d.tk.call("font", "metrics", d.log.cget("font"), "-linespace"))
 print(f"log height on a 1280x800 screen: {d.log.winfo_height()} px, about {lines} lines")
-assert lines >= 15, lines
+assert lines >= 14, lines      # 14: Conflicts etc. have their own row on the Deck since #41
 print("1. Deck-size screen: settings folded, log has room: ok")
 
 # 2. a manual sync ends with a green banner and a bold green last line
