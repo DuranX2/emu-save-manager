@@ -540,6 +540,7 @@ class DetailsPanel(ttk.Frame):
                        command=lambda: MatchDialog(app, key)).pack(side="left", padx=(0, 6))
         if key in app.lib.items and getattr(app, "meta", None) is not None:
             ttk.Button(row, text="Choose cover…", command=lambda: app.choose_picture(key, "cover")).pack(side="left")
+            ttk.Button(row, text="Edit…", command=lambda: app.edit_info(key)).pack(side="left", padx=(6, 0))
 
     def _buttons(self, keys):
         app, lib = self.app, self.app.lib
@@ -756,6 +757,71 @@ class ArtworkDialog(tk.Toplevel):
         self._save()
         self.app.artwork_dialog = None
         self.destroy()
+
+
+class EditInfoDialog(tk.Toplevel):
+    """Edit a game's information by hand: title, release, genre, players, developer, publisher,
+    description. Saved to the library for every machine; edited fields are never replaced by a
+    look-up. Empty a field to remove it."""
+    FIELDS = (("title", "Title"), ("released", "Released"), ("genre", "Genre"), ("players", "Players"),
+              ("developer", "Developer"), ("publisher", "Publisher"))
+
+    def __init__(self, app, key):
+        super().__init__(app)
+        self.app, self.key = app, key
+        it = app.lib.get(key)
+        rec = app.meta.get(key)
+        self.date_field = "date" if rec.get("date") else "year"
+        self.title(f"Edit information: {app.display_title(key)}")
+        self.transient(app)
+        f = ttk.Frame(self, padding=12)
+        f.pack(fill="both", expand=True)
+        ttk.Label(f, text=f"{L.system_name(it.system)} · {it.path}", foreground=apptheme.DIM,
+                  wraplength=460).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
+        self.vars = {}
+        for r, (name, label) in enumerate(self.FIELDS, 1):
+            field = self.date_field if name == "released" else name
+            v = tk.StringVar(value=str(rec.get(field) or (it.title if name == "title" else "")))
+            self.vars[name] = v
+            ttk.Label(f, text=label).grid(row=r, column=0, sticky="w", padx=(0, 8), pady=2)
+            e = ttk.Entry(f, textvariable=v, width=48)
+            e.grid(row=r, column=1, sticky="we", pady=2)
+            if r == 1:
+                e.focus_set()
+                e.select_range(0, "end")
+        r = len(self.FIELDS) + 1
+        ttk.Label(f, text="Description").grid(row=r, column=0, sticky="nw", padx=(0, 8), pady=2)
+        self.desc = tk.Text(f, width=48, height=8, wrap="word", relief="flat", borderwidth=4, font="TkDefaultFont")
+        c = apptheme.colors(app)
+        self.desc.configure(background=c["log"], foreground=c["log_fg"], insertbackground=c["log_fg"])
+        self.desc.insert("1.0", rec.get("desc", ""))
+        self.desc.grid(row=r, column=1, sticky="nsew", pady=2)
+        f.columnconfigure(1, weight=1)
+        f.rowconfigure(r, weight=1)
+        ttk.Label(f, text="Saved to the library for every machine. Look-ups won't replace what you edit; "
+                          "empty a field to remove it. The game's file isn't renamed.",
+                  foreground=apptheme.DIM, wraplength=460).grid(row=r + 1, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        b = ttk.Frame(f)
+        b.grid(row=r + 2, column=0, columnspan=2, sticky="e", pady=(10, 0))
+        ttk.Button(b, text="Save", command=self.save).pack(side="left", padx=(0, 6))
+        ttk.Button(b, text="Cancel", command=self.destroy).pack(side="left")
+        self.bind("<Escape>", lambda e: self.destroy())
+
+    def fields(self) -> dict:
+        out = {}
+        for name, _label in self.FIELDS:
+            out[self.date_field if name == "released" else name] = self.vars[name].get()
+        out["desc"] = self.desc.get("1.0", "end").strip()
+        return out
+
+    def save(self):
+        fields = self.fields()
+        it = self.app.lib.get(self.key)
+        rec = self.app.meta.get(self.key)
+        if fields["title"].strip() == it.title and not rec.get("title"):
+            fields.pop("title")                       # unchanged file-name title: nothing to store
+        self.destroy()
+        self.app.save_info(self.key, fields)
 
 
 class SystemPicker(tk.Toplevel):

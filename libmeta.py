@@ -257,6 +257,35 @@ class MetaStore:
         with self.lock:
             return self.data.get(system, {}).get(key, {})
 
+    EDITABLE = ("title", "year", "date", "genre", "players", "developer", "publisher", "desc")
+
+    def edit(self, key: str, fields: dict):
+        """The user's own information for a game (title, description...): an empty value removes
+        the field. Edited fields are remembered, so look-ups and matches never overwrite them.
+        Call flush() / flush_async() to write it to the library."""
+        system = key.split("/", 1)[0]
+        old = self.get(key)
+        merged = dict(old)
+        edited = set(old.get("edited", []))
+        for k, v in fields.items():
+            if k not in self.EDITABLE:
+                continue
+            v = (v or "").strip() if isinstance(v, str) else v
+            if v == (old.get(k) or ""):
+                continue                              # unchanged
+            if v:
+                merged[k] = v
+            else:
+                merged.pop(k, None)
+            edited.add(k)
+        if edited:
+            merged["edited"] = sorted(edited)
+        with self.lock:
+            self.data.setdefault(system, {})[key] = merged
+            self._staged.setdefault(system, {})[key] = merged
+        self._save_local_copy()
+        return merged
+
     def has_info(self, key) -> bool:
         r = self.get(key)
         return bool(r.get("media") or r.get("desc"))
@@ -312,7 +341,10 @@ class MetaStore:
         rec = {k: v for k, v in record.items() if v not in (None, "", [], {})}
         old = self.get(key)
         merged = dict(old)
+        mine = set(old.get("edited", []))          # fields the user edited: never replaced by a look-up
         for k, v in rec.items():
+            if k in mine:
+                continue
             if k == "tried":
                 merged["tried"] = dict(old.get("tried", {}), **v)
             elif replace or not merged.get(k) or k in ("source",):

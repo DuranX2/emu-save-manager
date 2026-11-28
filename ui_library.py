@@ -22,7 +22,7 @@ APP_NAME = "ROM Library"
 SYSTEM = platform.system()
 ALL = "__all__"
 FILTERS = ("All games", "On this machine", "Not on this machine", "Checked out elsewhere", "Favourites",
-           "Only on this machine", "Missing cover", "Missing information")
+           "Only on this machine", "Missing cover", "Missing information", "Hidden")
 ART_FILTERS = ("Missing cover", "Missing information")     # change as artwork is found or added
 COLORS = dict(apptheme.STATUS)        # readable on the ROM Library's dark theme
 
@@ -764,6 +764,8 @@ class LibraryApp(tk.Tk):
         lib = self.lib
         counts, here = {}, {}
         for k in lib.all_keys():
+            if lib.is_hidden(k):
+                continue                                  # hidden games aren't counted
             it = lib.get(k)
             counts[it.system] = counts.get(it.system, 0) + 1
             if lib.status(k)[0] in ("here", "partial", "local_only", "card_out"):
@@ -870,6 +872,8 @@ class LibraryApp(tk.Tk):
         lib = self.lib
         it = lib.get(key)
         if self.system_sel != ALL and it.system != self.system_sel:
+            return False
+        if lib.is_hidden(key) != (flt == "Hidden"):     # hidden games only show under "Hidden"
             return False
         if words:
             rec = self.meta.get(key) if self.meta else {}
@@ -1074,6 +1078,44 @@ class LibraryApp(tk.Tk):
             self.events.put(("fav", keys, ok, lib.error))
         threading.Thread(target=work, daemon=True).start()
 
+    def toggle_hidden(self):
+        """Hide the selected games everywhere (every machine), or show them again."""
+        lib = self.lib
+        keys = [k for k in self.selected() if k in lib.items]
+        if not keys:
+            return
+        on = not all(lib.is_hidden(k) for k in keys)
+
+        def work():
+            ok = lib.set_hidden(keys, on)
+            self.events.put(("hidden", keys, ok, lib.error, on))
+        threading.Thread(target=work, daemon=True).start()
+
+    def edit_info(self, key=None):
+        keys = [key] if key else self.selected()
+        if len(keys) == 1 and keys[0] in self.lib.items and self.meta is not None:
+            C.EditInfoDialog(self, keys[0])
+
+    def save_info(self, key, fields):
+        """From EditInfoDialog: keep the edit and write it to the library in the background."""
+        it = self.lib.get(key)
+        self.meta.edit(key, fields)
+        self.refresh_meta_views([key])
+        self.set_status(f"Saving the information for {self.display_title(key)}…")
+
+        def work():
+            self.meta.flush_async(info_systems=[it.system])
+            self.meta.wait()
+            ok = self.meta.write_ok
+
+            def done():
+                self.set_status(f"Information saved for {self.display_title(key)}." if ok else
+                                "The change shows here; it couldn't be saved to the library yet "
+                                "(it will be with the next artwork save).")
+                self.fill_games()
+            self.events.put(("call", done))
+        threading.Thread(target=work, daemon=True).start()
+
     def show_details(self):
         keys = self.selected()
         if len(keys) != 1:
@@ -1169,6 +1211,15 @@ class LibraryApp(tk.Tk):
                     ev[1]()
                 elif ev[0] == "log":
                     self.set_status(ev[1])
+                elif ev[0] == "hidden":
+                    _, keys, ok, err, on = ev
+                    if not ok:
+                        messagebox.showerror(APP_NAME, f"Couldn't save that to the library:\n{err}", parent=self)
+                    n = len(keys)
+                    self.set_status((f"{n} game(s) hidden; Show: Hidden lists them." if on else
+                                     f"{n} game(s) shown again."))
+                    self.fill_systems()
+                    self.fill_games()
                 elif ev[0] == "fav":
                     _, keys, ok, err = ev
                     if not ok:

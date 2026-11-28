@@ -849,22 +849,32 @@ class Library:
                     self.machines[n[:-5]] = d
         self._publish_mine(only_if_changed=True)
 
-    def set_favourite(self, keys, on: bool) -> bool:
+    def set_flag(self, keys, flag: str, on: bool) -> bool:
+        """A per-game flag shared by every machine ('fav', 'hidden'), merged with the library's latest."""
         latest = self._cat_json(self._meta("library.json"), {"items": {}})   # merge with other machines
         latest["items"] = rekey_dict(latest.get("items", {}))
         for k in keys:
             e = latest["items"].setdefault(k, {})
             if on:
-                e["fav"] = True
+                e[flag] = True
             else:
-                e.pop("fav", None)
+                e.pop(flag, None)
                 if not e:
                     latest["items"].pop(k, None)
         self.shared = latest
         return self._put_json(self._meta("library.json"), latest)
 
+    def set_favourite(self, keys, on: bool) -> bool:
+        return self.set_flag(keys, "fav", on)
+
+    def set_hidden(self, keys, on: bool) -> bool:
+        return self.set_flag(keys, "hidden", on)
+
     def is_favourite(self, key) -> bool:
         return bool(self.shared.get("items", {}).get(key, {}).get("fav"))
+
+    def is_hidden(self, key) -> bool:
+        return bool(self.shared.get("items", {}).get(key, {}).get("hidden"))
 
     # -- this machine's checkouts ----------------------------------------------
     def manifest(self) -> dict:

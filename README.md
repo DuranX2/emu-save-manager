@@ -401,6 +401,11 @@ its `--rom-library` launch option or its name).
 - **Space used by artwork:** Artwork… shows what the pictures, information and thumbnails take
   on this machine, and the library's shared copy on the share (**Open folder** opens this
   machine's copy).
+- **Edit information…** (game menu, or **Edit…** in the details panel): title, release, genre,
+  players, developer, publisher and description, saved to the library for every machine. Look-ups
+  and matches never replace what you edit; empty a field to remove it. The game's file isn't renamed.
+- **Hide** (game menu): hidden games leave every view and the system counts on every machine;
+  **Show: Hidden** lists them, and **Show again (unhide)** brings them back.
 - **Right-click menus.** A game's menu has the same actions as **A** on a controller (check out / in,
   favourite, details, artwork); a system's menu looks up its artwork, leaves it out of look-ups, and
   opens the Check-up and BIOS.

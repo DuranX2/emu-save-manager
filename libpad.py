@@ -265,6 +265,8 @@ def game_items(app, keys):
     if any(k in lib.items for k in keys):
         fav = all(lib.is_favourite(k) for k in keys)
         items.append(("☆ Unfavourite" if fav else "★ Favourite", a.toggle_favourite))
+        hid = all(lib.is_hidden(k) for k in keys)
+        items.append(("Show again (unhide)" if hid else "Hide", a.toggle_hidden))
     if len(keys) == 1:
         key = keys[0]
         items.append(("Details…", a.show_details))
@@ -274,6 +276,7 @@ def game_items(app, keys):
                 ui_covers.MatchDialog(a, key)
             items.append(("Wrong artwork? Find the right game…", match))
         if key in lib.items and getattr(a, "meta", None) is not None:
+            items.append(("Edit information…", lambda: a.edit_info(key)))
             items.append(("Use my own cover picture…", lambda: a.choose_picture(key, "cover")))
             items.append(("Use my own screenshot…", lambda: a.choose_picture(key, "screenshot")))
     return items
