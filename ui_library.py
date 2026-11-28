@@ -430,8 +430,26 @@ class LibraryApp(tk.Tk):
             w = self.pane.winfo_width()
             if w > 600:
                 self.pane.sashpos(1, w - self.details_w - 20)
+                self._fit_grid_column()
         except tk.TclError:
             pass
+
+    DETAILS_MIN = 260             # the details pane gives up to this much width to fit one more cover
+
+    def _fit_grid_column(self):
+        """If the covers fall a little short of one more column, take that from the details pane
+        (down to DETAILS_MIN) rather than leaving a wide gap with only two covers across."""
+        g = self.grid_view
+        self.pane.update_idletasks()
+        canvas_w = g.canvas.winfo_width()
+        if canvas_w < 50:
+            return
+        step = g.tw + g.GAP
+        cols = max(1, (canvas_w - g.GAP) // step)
+        need = (cols + 1) * step + g.GAP - canvas_w
+        details_now = self.pane.winfo_width() - self.pane.sashpos(1)
+        if 0 < need <= details_now - self.DETAILS_MIN:
+            self.pane.sashpos(1, self.pane.sashpos(1) + need)
 
     def set_view(self, view, refill=True):
         keep = self.selected() if refill else []
