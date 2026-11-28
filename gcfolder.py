@@ -57,6 +57,11 @@ class GCFile:
         return self.path.name
 
     @property
+    def empty(self):
+        """A 0-byte file: the save's data is gone (see Empty saves… in the main window)."""
+        return self.size == 0
+
+    @property
     def key(self):
         """Which save this is on a card: game ID + the save's own file name."""
         return (self.save.game_id, self.save.filename)
@@ -100,6 +105,20 @@ def find_locations(gc_root, exports_dir=None) -> list:
     return out
 
 
+EMPTY_TITLE = "Empty save"
+EMPTY_DETAIL = "No data in this file (0 bytes)"
+
+
+def empty_save(name: str) -> saveinfo.GCSave:
+    """What an empty .gci can still say: Dolphin names them <maker>-<game code>-<save name>.gci."""
+    stem = name[:-4] if name.lower().endswith(".gci") else name
+    parts = stem.split("-", 2)
+    gid, fname = "", stem
+    if len(parts) == 3 and len(parts[0]) == 2 and len(parts[1]) == 4:
+        gid, fname = parts[1] + parts[0], parts[2]
+    return saveinfo.GCSave(gid or "??????", fname, EMPTY_TITLE, EMPTY_DETAIL, 0)
+
+
 def list_folder(folder) -> tuple:
     """([GCFile] sorted by title, [(file name, problem)])."""
     files, problems = [], []
@@ -109,11 +128,15 @@ def list_folder(folder) -> tuple:
     for p in sorted(folder.iterdir()):
         if not p.is_file() or p.suffix.lower() != ".gci":
             continue
+        size = p.stat().st_size
+        if size == 0:                                      # shown on the card, marked as empty
+            files.append(GCFile(p, empty_save(p.name), 0))
+            continue
         s = saveinfo.parse_gci(p)
         if s is None:
             problems.append((p.name, "not a GameCube save"))
             continue
-        files.append(GCFile(p, s, p.stat().st_size))
+        files.append(GCFile(p, s, size))
     files.sort(key=lambda f: ((f.save.title or f.save.game_id).lower(), f.save.detail.lower(), f.name))
     return files, problems
 
@@ -204,6 +227,9 @@ def transfer(files, dest_dir, move: bool, backup_dir, conflict=None) -> Report:
         if f.path.parent.resolve() == dest_dir.resolve() if dest_dir.exists() else False:
             rep.refused.append((f, "it's already on this card"))
             continue
+        if f.empty:
+            rep.refused.append((f, "it's empty: the save's data is gone"))
+            continue
         if move and f.save.no_move:
             rep.refused.append((f, "the game marked it \"no move\""))
             continue
@@ -257,6 +283,9 @@ def export(files, dest_dir) -> Report:
     rep = Report()
     dest_dir = Path(dest_dir)
     for f in files:
+        if f.empty:
+            rep.refused.append((f, "it's empty: the save's data is gone"))
+            continue
         data = f.path.read_bytes()
         target = dest_dir / f.name
         n = 2

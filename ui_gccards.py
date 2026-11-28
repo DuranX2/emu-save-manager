@@ -35,6 +35,9 @@ class GCItem:
         self.name = f.name
         self.title = s.title or s.game_id
         self.detail = s.detail
+        self.empty = f.empty
+        if f.empty:                        # name the game from its ID; say plainly the data is gone
+            self.title = f"Empty save · {s.game_id}"
         self.frames = s.frames
         self.ticks = timeline(s.frames, s.bounce)
         self.banner = s.banner
@@ -74,6 +77,15 @@ class GCConsoleView(ConsoleBase):
                 self.error[i] = f"Can't read {loc.path}: {ex}"
                 continue
             self.items[i] = [GCItem(f) for f in files]
+            titles = getattr(self.dialog.app, "titles", None)
+            for it in self.items[i]:
+                if it.empty and titles is not None:
+                    try:
+                        name = titles.lookup("gc", it.file.save.game_id)
+                    except Exception:  # noqa - a name is a nicety
+                        name = ""
+                    if name:
+                        it.title = f"Empty save · {name}"
             self.problems[i] = problems
         self.clamp()
         self.photos = {}
@@ -310,6 +322,8 @@ class GCConsoleView(ConsoleBase):
         opts = []
         if there is not None and there.path != here.path:
             opts += [("copy", f"Copy to {there.label}"), ("move", f"Move to {there.label}")]
+        if any(it.empty for it in sel):
+            opts.insert(0, ("empty", "Put back a kept copy…"))
         opts.append(("delete", "Delete"))
         if here.kind != "exports":
             opts.append(("export", "Export a copy to the backups"))
@@ -317,14 +331,28 @@ class GCConsoleView(ConsoleBase):
 
         def chosen(key):
             {"copy": lambda: self._transfer(False), "move": lambda: self._transfer(True),
-             "delete": self._delete, "export": self._export, "details": self.details}.get(key, lambda: None)()
+             "delete": self._delete, "export": self._export, "details": self.details,
+             "empty": self.find_copies}.get(key, lambda: None)()
         self.show_overlay(what, "", opts, chosen)
+
+    def find_copies(self):
+        """Empty saves on this card: open Empty saves for the GameCube folder, to put a copy back."""
+        from ui_emptysaves import EmptySavesDialog
+        d = self.dialog
+        emu = getattr(d, "emu", "Dolphin")
+        dlg = EmptySavesDialog(d.app, locations=[(emu, "GameCube Saves", d.gc_root, ())])
+        dlg.bind("<Destroy>", lambda e: self.reload() if e.widget is dlg else None, add="+")
 
     def details(self):
         it = self.current()
         if it is None:
             return
         s, f = it.file.save, it.file
+        if f.empty:
+            self.show_overlay(it.title, f"File: {f.path}\n\nThis file is empty (0 bytes), so the save's "
+                              "data is gone. Use 'Put back a kept copy…' to restore it from a copy the "
+                              "Save Manager kept, if there is one.", [("ok", "Close")], lambda k: None)
+            return
         lines = [f"Game ID: {s.game_id}" + (f" ({f.region})" if f.region else ""),
                  f"Save name on the card: {s.filename}", f"File: {f.path}",
                  f"Size: {s.blocks} blocks ({f.size:,} bytes)"]
@@ -395,6 +423,7 @@ class GCCardDialog(tk.Toplevel):
         self.app = app
         self.title("GameCube Memory Card Manager")
         emu = emu if emu in DOLPHIN_EMUS else "Dolphin"
+        self.emu = emu
         try:
             self.gc_root = app.resolve(emu).get("GameCube Saves")
         except Exception:  # noqa
