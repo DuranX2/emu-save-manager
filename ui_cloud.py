@@ -40,6 +40,7 @@ class CloudSyncDialog(tk.Toplevel):
         self._ticks = 0
         self._last_banner = None
         self._build()
+        self._tag_wheel()
         self._autodetect()
         self._update_conn_summary(collapse_if_ready=True)
         self._refresh_conflicts(announce=True)
@@ -50,15 +51,71 @@ class CloudSyncDialog(tk.Toplevel):
         self.after(100, self._poll)
 
     # ---- UI -------------------------------------------------------------------
+    def _scroll_body(self):
+        """Everything sits in a frame that scrolls (mouse wheel, right stick) when the window is
+        shorter than its contents, e.g. on the Steam Deck; when there's room, the log takes it."""
+        import mainpad
+        canvas = tk.Canvas(self, highlightthickness=0, borderwidth=0)
+        sb = ttk.Scrollbar(self, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        try:
+            canvas.configure(background=ttk.Style(self).lookup("TFrame", "background") or None)
+        except tk.TclError:
+            pass
+        body = ttk.Frame(canvas)
+        win = canvas.create_window(0, 0, window=body, anchor="nw")
+
+        def fit(_e=None):
+            w, h = canvas.winfo_width(), canvas.winfo_height()
+            need = body.winfo_reqheight()
+            canvas.itemconfigure(win, width=w, height=max(h, need))
+            canvas.configure(scrollregion=(0, 0, w, max(h, need)))
+            if need <= h:
+                canvas.yview_moveto(0)
+        canvas.bind("<Configure>", fit)
+        body.bind("<Configure>", lambda e: self.after_idle(fit))
+        self._canvas, self._body = canvas, body
+
+        def scroll(step):
+            if body.winfo_reqheight() > canvas.winfo_height():
+                canvas.yview_scroll(step * 3, "units")
+        mainpad.register_scroll(canvas, scroll)
+
+        def wheel(e):
+            w = e.widget
+            if isinstance(w, (tk.Text, ttk.Treeview, tk.Listbox)) or str(w).endswith("combobox"):
+                return                      # they scroll themselves
+            if getattr(e, "num", 0) == 4 or getattr(e, "delta", 0) > 0:
+                scroll(-1)
+            else:
+                scroll(1)
+        tag = f"CloudWheel{id(self)}"
+        for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            self.bind_class(tag, seq, wheel)
+        self._wheel_tag = tag
+        return body
+
+    def _tag_wheel(self, w=None):
+        """The mouse wheel scrolls the window over any of its widgets (lists and the log scroll
+        themselves)."""
+        w = w or self
+        if self._wheel_tag not in w.bindtags():
+            w.bindtags((self._wheel_tag,) + w.bindtags())
+        for c in w.winfo_children():
+            self._tag_wheel(c)
+
     def _build(self):
-        summary = ttk.Frame(self, padding=(10, 8, 10, 0))
+        body = self._scroll_body()
+        summary = ttk.Frame(body, padding=(10, 8, 10, 0))
         summary.pack(fill="x")
         self.conn_label = ttk.Label(summary, text="", foreground="#1f5fa8")
         self.conn_label.pack(side="left")
         self.conn_btn = ttk.Button(summary, text="Hide connection settings ▴", command=self._toggle_conn)
         self.conn_btn.pack(side="right")
         self.conn_summary = summary
-        top = ttk.Frame(self, padding=10)
+        top = ttk.Frame(body, padding=10)
         top.pack(fill="x")
         top.columnconfigure(1, weight=1)
         self.conn_frame = top
@@ -98,7 +155,7 @@ class CloudSyncDialog(tk.Toplevel):
         ttk.Entry(top, textvariable=self.v_base, width=44).grid(row=3, column=1, sticky="w", padx=6)
         ttk.Label(top, text="Set automatically for EmuDeck Cloud", foreground="#666").grid(row=3, column=2, sticky="e")
 
-        frame = ttk.LabelFrame(self, text="What to sync (tap ✓ / ✗ to switch a row on or off)", padding=6)
+        frame = ttk.LabelFrame(body, text="What to sync (tap ✓ / ✗ to switch a row on or off)", padding=6)
         frame.pack(fill="x", padx=10)
         cols = ("sync", "emu", "loc", "local", "cloud")
         style = ttk.Style(self)
@@ -136,7 +193,7 @@ class CloudSyncDialog(tk.Toplevel):
         ttk.Button(fb, text="All off", command=lambda: self._set_all(False)).pack(side="left", padx=(8, 0))
         ttk.Button(fb, text="Edit cloud folder…", command=self._edit_remote).pack(side="left", padx=(16, 0))
 
-        act = ttk.Frame(self, padding=(10, 8))
+        act = ttk.Frame(body, padding=(10, 8))
         act.pack(fill="x")
         ttk.Checkbutton(act, text="Preview only (change nothing)", variable=self.v_dry).pack(side="left")
         self.buttons = []
@@ -146,13 +203,17 @@ class CloudSyncDialog(tk.Toplevel):
             b = ttk.Button(act, text=text, command=cmd)
             b.pack(side="left", padx=(8, 0))
             self.buttons.append(b)
-        self.cancel_btn = ttk.Button(act, text="Cancel", command=self.cancel, state="disabled")
+        act2 = act
+        if self.compact:                    # a small screen: these get a row of their own, so none drop off
+            act2 = ttk.Frame(body, padding=(10, 0, 10, 4))
+            act2.pack(fill="x")
+        self.cancel_btn = ttk.Button(act2, text="Cancel", command=self.cancel, state="disabled")
         self.cancel_btn.pack(side="right")
-        ttk.Button(act, text="How sync works", command=self.explain).pack(side="right", padx=(0, 8))
-        self.conflicts_btn = ttk.Button(act, text="Conflicts", command=self.show_conflicts)
+        ttk.Button(act2, text="How sync works", command=self.explain).pack(side="right", padx=(0, 8))
+        self.conflicts_btn = ttk.Button(act2, text="Conflicts", command=self.show_conflicts)
         self.conflicts_btn.pack(side="right", padx=(0, 8))
 
-        auto = ttk.LabelFrame(self, text="Automatic sync (runs in the background, even when this app is closed)",
+        auto = ttk.LabelFrame(body, text="Automatic sync (runs in the background, even when this app is closed)",
                               padding=8)
         auto.pack(fill="x", padx=10, pady=(8, 0))
         r1 = ttk.Frame(auto)
@@ -177,15 +238,15 @@ class CloudSyncDialog(tk.Toplevel):
                         command=self.toggle_exit).pack(side="left", padx=(6, 0))
         ttk.Checkbutton(r2, text="EmulationStation (ES-DE) closes", variable=self.v_exit_fe,
                         command=self.toggle_exit).pack(side="left", padx=(10, 0))
-        self.auto_status = ttk.Label(self, text="", foreground="#1f5fa8", padding=(12, 2))
+        self.auto_status = ttk.Label(body, text="", foreground="#1f5fa8", padding=(12, 2))
         self.auto_status.pack(anchor="w")
 
-        self.banner = tk.Label(self, text="", anchor="w", padx=12, pady=7,
+        self.banner = tk.Label(body, text="", anchor="w", padx=12, pady=7,
                                font=("TkDefaultFont", 11, "bold"))
         self.banner.pack(fill="x", padx=10, pady=(6, 0))
         self._banner("idle", "Ready.")
 
-        logf = ttk.Frame(self, padding=(10, 6, 10, 10))
+        logf = ttk.Frame(body, padding=(10, 6, 10, 10))
         logf.pack(fill="both", expand=True)
         self.log = tk.Text(logf, height=10, wrap="word", state="disabled")
         self.log.tag_configure("error", foreground="#c62828")

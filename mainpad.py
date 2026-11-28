@@ -286,6 +286,7 @@ class MainPad(PadBase):
                  ("Save History…", a.open_history),
                  ("Find empty saves…", getattr(a, "open_empty_saves", None)),
                  ("Cloud Sync…", a.open_cloud),
+                 ("Cloud Sync conflicts…", getattr(a, "open_conflicts", None)),
                  ("PS2 Card Manager…", a.open_ps2_cards),
                  ("PS1 Card Manager…", a.open_ps1_cards),
                  ("GameCube Card Manager…", a.open_gc_cards),

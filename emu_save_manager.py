@@ -1218,6 +1218,13 @@ class App(tk.Tk):
         from ui_history import SaveHistoryDialog
         SaveHistoryDialog(self, self.current)
 
+    def open_conflicts(self):
+        """Straight to Cloud Sync's conflicts (saves changed on both devices)."""
+        d = self.open_cloud()
+        if d is not None and hasattr(d, "show_conflicts"):
+            d.after(200, d.show_conflicts)
+        return d
+
     def open_empty_saves(self):
         from ui_emptysaves import EmptySavesDialog
         return EmptySavesDialog(self)
