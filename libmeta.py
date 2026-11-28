@@ -142,6 +142,45 @@ log = logging.getLogger("esm")      # the apps' log file (applog.py)
 
 
 # ---------------------------------------------------------------------------
+# Space used by artwork
+# ---------------------------------------------------------------------------
+def folder_size(path) -> tuple:
+    """(bytes, files) under a folder; (0, 0) if it isn't there."""
+    total = files = 0
+    for root, _dirs, names in os.walk(path):
+        for n in names:
+            try:
+                total += os.path.getsize(os.path.join(root, n))
+                files += 1
+            except OSError:
+                pass
+    return total, files
+
+
+def local_usage(store=None) -> dict:
+    """What artwork takes on this machine: this library's pictures and information, thumbnails,
+    and copies kept for other libraries (bytes, files) each."""
+    mine = store.cache_dir if store is not None else None
+    out = {"pictures": folder_size(mine) if mine else (0, 0), "thumbnails": folder_size(THUMB_CACHE)}
+    all_b, all_f = folder_size(MEDIA_CACHE)
+    out["other libraries"] = (max(0, all_b - out["pictures"][0]), max(0, all_f - out["pictures"][1]))
+    out["total"] = tuple(sum(v[i] for k, v in out.items()) for i in (0, 1))
+    return out
+
+
+def library_usage(lib):
+    """(bytes, files) of the artwork stored in the library (.library on the share), or None."""
+    try:
+        rc, out = lib.runner.capture(["size", "--json", lib._meta()], merge=False)
+        if rc != 0:
+            return None
+        d = json.loads(out)
+        return int(d.get("bytes", 0)), int(d.get("count", 0))
+    except (ValueError, OSError, AttributeError):
+        return None
+
+
+# ---------------------------------------------------------------------------
 # The store
 # ---------------------------------------------------------------------------
 def _merge_system(data: dict, system: str, recs: dict):

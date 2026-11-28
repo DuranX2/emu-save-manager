@@ -1,5 +1,6 @@
 """ROM Library "Missing cover" / "Missing information" filters, and EmuDeck's Desktop / Cloud /
-Emulators folders not shown as systems (run with xvfb-run -a):
+Emulators folders not shown as systems, the Games column fitting big numbers, and the space
+artwork uses (run with xvfb-run -a):
 games without a cover (or without a description) are shown; a game that gets its cover while
 the filter is on leaves the list; the controller's Y menu offers the filters too."""
 import faulthandler, io, os, shutil, sys, time
@@ -77,5 +78,46 @@ ok(pump(15, lambda: shown() == [key["Bravo"]]), shown())
 # the controller's Y menu lists the new filters
 labels = [t for t, _f in libpad.library_items(app)]
 ok(any("Missing cover" in t for t in labels) and any("Missing information" in t for t in labels), labels)
+# the Games column fits big numbers (libraries over 10k games), and the pane widens with it
+app.geometry("1180x720+0+0"); pump(0.5)
+w0, sash0 = int(app.sys_tree.column("count", "width")), app.pane.sashpos(0)
+ok(w0 == U.LibraryApp.COUNT_W, f"small library: the usual width ({w0})")
+app._fit_counts(["26412", "3210 of 26412", "12 of 120"]); pump(0.3)
+import tkinter.font as tkfont
+font = tkfont.nametofont(U.ttk.Style().lookup("Treeview", "font") or "TkDefaultFont")
+w1 = int(app.sys_tree.column("count", "width"))
+ok(w1 >= font.measure("3210 of 26412") + 10 and w1 > w0, (w0, w1))
+ok(app.pane.sashpos(0) - sash0 == w1 - w0, ("pane widened by the same", sash0, app.pane.sashpos(0)))
+app.fill_systems(); pump(0.3)
+ok(int(app.sys_tree.column("count", "width")) == w0, "back to normal when the numbers are small again")
+
+# the wheel scrolls the details pane wherever the mouse is on it (not only on the scrollbar)
+app.meta.put(key["Bravo"], {"desc": "A long description. " * 200}, replace=True)
+app.v_filter.set("All games"); app.fill_games(); pump(0.2)
+app.tree.selection_set(key["Bravo"]); app._update_selection(); pump(0.5)
+dp = app.details
+labels = [w for w in dp.inner.winfo_children() if w.winfo_class() == "TLabel"]
+ok(labels and dp.canvas.yview()[1] < 1.0, "a long description that needs scrolling")
+y0 = dp.canvas.yview()[0]
+if U.SYSTEM == "Windows":
+    labels[-1].event_generate("<MouseWheel>", delta=-120)
+else:
+    labels[-1].event_generate("<Button-5>")
+pump(0.2)
+ok(dp.canvas.yview()[0] > y0, f"the wheel over a label scrolls the pane ({y0} -> {dp.canvas.yview()[0]})")
+
+# space used by artwork, in the Artwork window
+import ui_covers as C
+d = C.ArtworkDialog(app); pump(0.2)
+ok(pump(20, lambda: "the library:" in d.usage_label.cget("text") and "checking" not in d.usage_label.cget("text")),
+   d.usage_label.cget("text"))
+text = d.usage_label.cget("text")
+ok("this machine" in text and "pictures" in text and "thumbnails" in text and " file" in text, text)
+loc = C.M.local_usage(app.meta)
+ok(loc["pictures"][1] >= 4 and loc["total"][0] >= loc["pictures"][0], loc)
+libsize = C.M.library_usage(app.lib)
+ok(libsize and libsize[1] >= 4 and libsize[0] > 0, libsize)
+print("   ", text)
+d.close(); pump(0.2)
 app.destroy()
 print(f"gui_artfilter: {checks} checks passed OK")

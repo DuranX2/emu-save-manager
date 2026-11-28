@@ -398,6 +398,9 @@ its `--rom-library` launch option or its name).
   without a description), to fill in by hand; a game leaves the list once it gets one. EmuDeck's
   own `desktop`, `cloud`, `emulators`, `remoteplay` and `generic-applications` folders in
   `Emulation/roms` aren't shown as systems.
+- **Space used by artwork:** Artwork… shows what the pictures, information and thumbnails take
+  on this machine, and the library's shared copy on the share (**Open folder** opens this
+  machine's copy).
 - **Right-click menus.** A game's menu has the same actions as **A** on a controller (check out / in,
   favourite, details, artwork); a system's menu looks up its artwork, leaves it out of look-ups, and
   opens the Check-up and BIOS.

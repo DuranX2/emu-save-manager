@@ -430,11 +430,26 @@ class DetailsPanel(ttk.Frame):
         self._win = self.canvas.create_window(0, 0, window=self.inner, anchor="nw")
         self.inner.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
         self.canvas.bind("<Configure>", lambda e: self.canvas.itemconfigure(self._win, width=e.width))
-        for w in (self.canvas, self.inner):
-            w.bind("<Button-4>", lambda e: self.canvas.yview_scroll(-2, "units"))
-            w.bind("<Button-5>", lambda e: self.canvas.yview_scroll(2, "units"))
-            w.bind("<MouseWheel>", lambda e: self.canvas.yview_scroll(-2 if e.delta > 0 else 2, "units"))
+        # The wheel scrolls the pane wherever the mouse is on it: every widget inside gets this tag
+        self._wheel_tag = f"DetailsWheel{id(self)}"
+        self.bind_class(self._wheel_tag, "<Button-4>", lambda e: self._wheel(-2))
+        self.bind_class(self._wheel_tag, "<Button-5>", lambda e: self._wheel(2))
+        self.bind_class(self._wheel_tag, "<MouseWheel>", lambda e: self._wheel(-2 if e.delta > 0 else 2))
+        self._tag_wheel(self.canvas)
+        self._tag_wheel(self.inner)
         self.show(None)
+
+    def _wheel(self, step):
+        if self.canvas.yview() != (0.0, 1.0):          # only when there's something to scroll
+            self.canvas.yview_scroll(step, "units")
+        return "break"
+
+    def _tag_wheel(self, w):
+        tags = w.bindtags()
+        if self._wheel_tag not in tags:
+            w.bindtags((self._wheel_tag,) + tags)
+        for c in w.winfo_children():
+            self._tag_wheel(c)
 
     def _clear(self):
         for w in self.inner.winfo_children():
@@ -447,6 +462,12 @@ class DetailsPanel(ttk.Frame):
         return lbl
 
     def show(self, keys):
+        try:
+            self._show(keys)
+        finally:
+            self._tag_wheel(self.inner)              # the new labels and pictures scroll the pane too
+
+    def _show(self, keys):
         self._clear()
         app = self.app
         keys = keys or []
@@ -602,6 +623,13 @@ class ArtworkDialog(tk.Toplevel):
         if app.selected():
             ttk.Radiobutton(sc, text=f"The {len(app.selected())} selected", variable=self.v_scope,
                             value="selected").pack(side="left", padx=10)
+        use = ttk.Frame(f)
+        use.grid(row=r, column=0, columnspan=3, sticky="we", pady=(4, 0)); r += 1
+        ttk.Label(use, text="Space used:").pack(side="left")
+        self.usage_label = ttk.Label(use, text="working it out…", foreground=apptheme.DIM, wraplength=430)
+        self.usage_label.pack(side="left", padx=6)
+        ttk.Button(use, text="Open folder", command=lambda: app.open_folder(M.MEDIA_CACHE.parent)).pack(side="right")
+        self._show_usage()
         skip = ttk.Frame(f)
         skip.grid(row=r, column=0, columnspan=3, sticky="w", pady=(4, 0)); r += 1
         ttk.Label(skip, text="Left out of \"All games\":").pack(side="left")
@@ -635,6 +663,37 @@ class ArtworkDialog(tk.Toplevel):
         self.app.cfg.setdefault("artwork", {}).update(
             {"esde": self.v_esde.get(), "screenscraper": self.v_ss.get(), "libretro": self.v_lr.get()})
         L.save_config(self.app.cfg)
+
+    def _show_usage(self):
+        """This machine's share at once; the library's from the share in the background."""
+        app = self.app
+        h = L.human
+
+        def text(loc, lib):
+            t = (f"this machine {h(loc['total'][0])} (pictures {h(loc['pictures'][0])}, "
+                 f"thumbnails {h(loc['thumbnails'][0])}")
+            if loc["other libraries"][0]:
+                t += f", other libraries {h(loc['other libraries'][0])}"
+            t += ")"
+            if lib == "…":
+                return t + " · the library: checking…"
+            if lib is None:
+                return t + " · the library: couldn't check"
+            return t + f" · the library: {h(lib[0])} in {lib[1]:,} file{'' if lib[1] == 1 else 's'}"
+
+        loc = M.local_usage(app.meta)
+        self.usage_label.config(text=text(loc, "…"))
+
+        def work():
+            lib = M.library_usage(app.lib) if app.lib else None
+
+            def done():
+                try:
+                    self.usage_label.config(text=text(loc, lib))
+                except tk.TclError:
+                    pass                                  # the window was closed meanwhile
+            app.events.put(("call", done))
+        threading.Thread(target=work, daemon=True).start()
 
     def _show_skip(self):
         skip = sorted(self.app.scrape_skip(), key=L.system_name)

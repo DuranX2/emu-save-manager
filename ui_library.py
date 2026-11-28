@@ -422,9 +422,11 @@ class LibraryApp(tk.Tk):
         if busy:
             self.tf.pack(fill="x", padx=10, before=self.bottom)
 
+    COUNT_W = 56                  # the Games column's usual width; wider when the numbers need it
+
     def _place_sashes(self):
         try:
-            self.pane.sashpos(0, 230 if self.compact else 260)
+            self.pane.sashpos(0, (230 if self.compact else 260) + getattr(self, "_count_extra", 0))
             w = self.pane.winfo_width()
             if w > 600:
                 self.pane.sashpos(1, w - self.details_w - 20)
@@ -778,6 +780,25 @@ class LibraryApp(tk.Tk):
         if self.system_sel not in counts and self.system_sel != ALL:
             self.system_sel = ALL
         self.sys_tree.selection_set(self.system_sel)
+        self._fit_counts([self._count_text(total, total_here)] +
+                         [self._count_text(counts[x], here.get(x, 0)) for x in counts])
+
+    def _fit_counts(self, texts):
+        """Widen the Games column to fit the longest count (big libraries: "3210 of 26412"), and
+        the systems pane with it, so the system names keep their space."""
+        try:
+            import tkinter.font as tkfont
+            font = tkfont.nametofont(ttk.Style().lookup("Treeview", "font") or "TkDefaultFont")
+            need = max((font.measure(t) for t in texts), default=0) + 14
+        except (tk.TclError, ValueError):
+            return
+        w = max(self.COUNT_W, need)
+        extra = w - self.COUNT_W
+        if int(self.sys_tree.column("count", "width")) != w:
+            self.sys_tree.column("count", width=w)
+        if extra != getattr(self, "_count_extra", 0):
+            self._count_extra = extra
+            self._place_sashes()
 
     @staticmethod
     def _count_text(n, h):
