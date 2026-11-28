@@ -58,6 +58,8 @@ class SaveHistoryDialog(tk.Toplevel):
         self.combo.pack(side="left", padx=6)
         self.combo.bind("<<ComboboxSelected>>", lambda e: self.refresh())
         ttk.Button(top, text="Take snapshot now", command=self.snapshot_now).pack(side="left", padx=(6, 0))
+        if hasattr(self.app, "open_empty_saves"):
+            ttk.Button(top, text="Find empty saves…", command=self.app.open_empty_saves).pack(side="right")
         self.folder_label = ttk.Label(top, text="", foreground="#666")
         self.folder_label.pack(side="left", padx=10)
 

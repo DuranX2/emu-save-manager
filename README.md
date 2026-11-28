@@ -49,6 +49,7 @@ Keep all `.py` files in this folder together and run:
 | `savehistory.py` | Save History: earlier versions of synced saves, kept at every sync; restore - no GUI |
 | `savenames.py` | game names for save files in Save History, the Conflicts list and the sync log |
 | `ui_history.py` | Save History window |
+| `emptysaves.py` / `ui_emptysaves.py` | find empty (0-byte) saves and put a kept copy back |
 | `saveinfo.py` | works out which game and which save each file belongs to (GameCube/Wii/PSP/PS3/PS1 metadata and icons, state file names, title-ID folders) - no GUI |
 | `titledb.py` | game names for IDs from the emulators' own lists, Cemu's title cache and ROM headers - no GUI |
 | `ui_saves.py` | the main window's save list, grouped by game |
@@ -142,6 +143,13 @@ way it was at a given time (use this for PCSX2 folder memory cards). A restored 
 so the next sync uploads it and the other device picks it up; the version it replaced is kept in the history
 first, so a restore can be undone. Defaults: 10 versions per file, at most 2 GB in total (oldest go first,
 the newest version of a file is never dropped), files over 256 MB (Xemu's hard disk) are skipped.
+
+**Find empty saves...** (in Save History, and the controller menu) lists save files that are empty (0 bytes,
+so their data is gone - left behind by the 2026-11-17 OneDrive upload problem or a crash while saving) in every
+emulator's folders, with the copies that can replace them: what a sync kept in `cloud_overwritten`, and Save
+History versions. Restoring puts a copy back with today's date (the next sync sends it on) and keeps the empty
+file in `empty_saves`. The GameCube manager shows an empty `.gci` on its card as "Empty save", with
+**Put back a kept copy...**.
 
 **EmuDeck Cloud** works too: **Set up EmuDeck Cloud...** uses the EmuDeck app's Patreon sign-in on that
 computer, picks Backblaze (`Emudeck-cloud`) or Wasabi (`Emudeck-cloud2`) and the `cs<id>/Emudeck/saves`

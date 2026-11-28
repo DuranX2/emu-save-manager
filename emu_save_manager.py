@@ -1218,6 +1218,10 @@ class App(tk.Tk):
         from ui_history import SaveHistoryDialog
         SaveHistoryDialog(self, self.current)
 
+    def open_empty_saves(self):
+        from ui_emptysaves import EmptySavesDialog
+        return EmptySavesDialog(self)
+
     def change_backup_dir(self):
         d = filedialog.askdirectory(parent=self, initialdir=str(self.backup_dir))
         if d:

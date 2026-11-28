@@ -284,6 +284,7 @@ class MainPad(PadBase):
                  ("Back up the selected saves", a.backup_selected),
                  ("Restore the selected backup", a.restore_selected),
                  ("Save History…", a.open_history),
+                 ("Find empty saves…", getattr(a, "open_empty_saves", None)),
                  ("Cloud Sync…", a.open_cloud),
                  ("PS2 Card Manager…", a.open_ps2_cards),
                  ("PS1 Card Manager…", a.open_ps1_cards),
