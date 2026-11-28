@@ -334,9 +334,41 @@ def default_rclone_conf() -> Path:
     return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "rclone" / "rclone.conf"
 
 
+def own_config_path() -> Path:
+    """The Save Manager's own copy of the rclone config, so the connection doesn't depend on
+    EmuDeck's Emulation/tools/rclone/rclone.conf (turning EmuDeck's Cloud Save off resets it)."""
+    return Path.home() / ".emu_save_manager" / "rclone" / "rclone.conf"
+
+
+def adopt_config(conf: str, remote: str) -> str:
+    """Keep a copy of `conf` as the app's own config and return that path. Only when `conf` has
+    the remote and isn't the app's own file already; otherwise `conf` is returned unchanged.
+    The copy is private to the user (0600); nothing is printed or logged from it."""
+    own = own_config_path()
+    try:
+        if not conf or not remote or Path(conf).resolve() == own.resolve():
+            return conf
+        if remote not in dict(list_remotes(conf)):
+            return conf
+        own.parent.mkdir(parents=True, exist_ok=True)
+        tmp = own.with_name("rclone.conf.esm_tmp")
+        shutil.copyfile(conf, tmp)
+        try:
+            os.chmod(tmp, 0o600)
+        except OSError:
+            pass
+        os.replace(tmp, own)
+        return str(own)
+    except OSError:
+        return conf
+
+
 def find_config(saved: str = "") -> str:
     if saved and Path(saved).is_file():
         return saved
+    own = own_config_path()
+    if own.is_file() and list_remotes(str(own)):
+        return str(own)
     for root in emudeck_roots():
         p = root / "tools" / "rclone" / "rclone.conf"
         if p.is_file():
