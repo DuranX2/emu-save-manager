@@ -1,6 +1,6 @@
 """Smart sync (syncplan): the side that changed wins (even with an older date), folder-card saves
 move as a whole, both-changed is a conflict until a side is chosen, a card that's a file on one
-side and a folder on the other is skipped with one message, empty files never replace real ones."""
+side and a folder on the other is skipped with one message, empty files never replace real ones (the real copy repairs them)."""
 import json, os, shutil, sys, time
 from pathlib import Path
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -103,10 +103,18 @@ print("7. file card vs folder card: one clear message, skipped, everything else 
 os.remove(deck / MF); sync(deck)
 assert read(deck / MF / "BASCUS-97399GodOfWar/data0.bin") == b"gow ch3"
 
-# 8. empty files still never replace real ones
+# 8. empty files never replace real ones; the real copy repairs the empty side
 put(deck / "Mcd002.ps2", b"", 0); sync(deck)
 assert read(C / "Mcd002.ps2") == b"card2" and any("Protected 1 file" in l for l in logs)
-print("8. an empty file never replaces a real one: ok")
+assert read(deck / "Mcd002.ps2") == b"card2", "the empty copy on this device was repaired from the cloud"
+put(C / "Mcd002.ps2", b"", 0); sync(deck)                 # the cloud copy emptied (newer): EmuDeck's old rclone
+assert read(deck / "Mcd002.ps2") == b"card2" and read(C / "Mcd002.ps2") == b"card2", "the cloud copy was repaired"
+kept = list((cloud / "EmuDeck/EmuSaveManager-overwritten/deck").rglob("Mcd002.ps2"))
+assert kept and all(k.stat().st_size == 0 for k in kept), "the empty cloud copy went to the backup"
+sync(deck); assert any("0 file(s) to download, 0 to upload" in l for l in logs), logs
+put(deck / "Mcd002.ps2", b"card2 v2", 0); put(C / "Mcd002.ps2", b"", 0); sync(deck)   # both changed, cloud empty
+assert read(C / "Mcd002.ps2") == b"card2 v2" and not any("CONFLICT" in l for l in logs), logs
+print("8. an empty file never replaces a real one, and the real copy repairs the empty side: ok")
 
 # 9. download-only and upload-only modes
 put(pc / "Mcd003.ps2", b"pc only", 0); put(C / "Mcd004.ps2", b"cloud only", 0)

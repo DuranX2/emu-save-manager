@@ -15,7 +15,8 @@ Items: a file, except inside a PCSX2 folder memory card ("<name>.ps2/" folder), 
 save folder is one item that is always copied whole, so a save never ends up half from each device.
 A card that is a file on one side and a folder on the other is reported once and skipped.
 Never deletes anything; replaced files still go to the backup folders (rclone --backup-dir), and an
-empty file never replaces one with content.
+empty file never replaces one with content: the copy with content is sent the other way instead, so an
+empty copy (e.g. left in the cloud by the 2026-11-17 upload problem) is repaired, not kept forever.
 """
 
 import fnmatch
@@ -215,6 +216,9 @@ def plan(local: dict, remote: dict, st: dict, mode: str = "both") -> dict:
         else:
             cl = _changed(lf, prev.get("l", {}), whole)
             cr = _changed(rf, prev.get("r", {}), whole)
+            el, er = _empty(lf), _empty(rf)
+            if cl and cr and el != er:                   # one side became empty: the side with data wins
+                cl, cr = er, el
             if cl and cr:
                 out["conflicts"][it] = _conflict_info(it, lf, rf, "changed on both since the last sync")
                 continue
@@ -228,7 +232,8 @@ def plan(local: dict, remote: dict, st: dict, mode: str = "both") -> dict:
             if _same(v, dst.get(rel)):
                 continue
             if v[0] == 0 and (dst.get(rel) or (0,))[0] > 0:
-                out["protected"].append(rel)             # an empty file never replaces a real one
+                out["protected"].append(rel)             # an empty file never replaces a real one;
+                out["down" if winner == "up" else "up"].append(rel)   # the real one repairs the empty side
                 continue
             sent.append(rel)
         out[winner].extend(sent)
@@ -241,6 +246,11 @@ def plan(local: dict, remote: dict, st: dict, mode: str = "both") -> dict:
     elif mode == "upload":
         out["down"], out["extra_local"] = [], []
     return out
+
+
+def _empty(files) -> bool:
+    """Every file of an item is empty (0 bytes): there is nothing in it to keep."""
+    return bool(files) and all(v[0] == 0 for v in files.values())
 
 
 def _conflict_info(item, lf, rf, why):
@@ -333,8 +343,8 @@ def sync_job(runner, job: dict, rpath: str, mode: str, dry: bool, local_backup, 
         log(f"Skipped {name}: it's {here} on this device but {there} in the cloud (for a PCSX2 card: "
             f"a folder card on one side, a single-file card on the other). Move one of them aside to sync it.")
     if p["protected"]:
-        log(f"Protected {len(p['protected'])} file(s): the incoming copy is empty, so the real one is kept. "
-            f"First: {p['protected'][0]}")
+        log(f"Protected {len(p['protected'])} file(s): the incoming copy is empty, so the real one is kept "
+            f"and sent to replace the empty copy (which goes to the backup folder). First: {p['protected'][0]}")
     names = _namer(job, local_dir, local) if p["conflicts"] else None
     for it, c in p["conflicts"].items():
         game = names.name(it) if names else ""
@@ -375,6 +385,11 @@ def _record(local_dir, rpath, st, p, local, remote, ok, mode, job):
                 continue
             src = dict(L.get(it, {}) if winner == "up" else R.get(it, {}))
             dst = dict(R.get(it, {}) if winner == "up" else L.get(it, {}))
+            back = "down" if winner == "up" else "up"
+            if not ((back == "up" and mode == "download") or (back == "down" and mode == "upload")):
+                for rel in prot & set(src):              # repaired: the real copy is now on both sides
+                    if rel in dst:
+                        src[rel] = dst[rel]
             whole = "/" in it and it.split("/", 1)[0] in cards
             after = ({rel: v for rel, v in dst.items() if rel in prot} if whole   # becomes the winner's
                      else dict(dst))
