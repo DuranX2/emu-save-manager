@@ -91,7 +91,7 @@ print("3. --bios opens it at start-up: ok")
 import emu_save_manager as esm
 calls = []
 real_popen = esm.subprocess.Popen
-esm.subprocess.Popen = lambda cmd, **k: calls.append(cmd)
+esm.subprocess.Popen = lambda cmd, **k: calls.append(cmd) or object()
 esm.App.open_folder = lambda self, p: None
 main = esm.App()
 pump(main, 0.5)

@@ -390,17 +390,25 @@ def is_within(child, parent):
         return False
 
 
-def launch_library(*args) -> bool:
-    """Start the ROM Library (this program with --rom-library) in its own process."""
+def in_game_mode() -> bool:
+    """True in the Steam Deck's Game Mode (gamescope), which shows only one window per app."""
+    if SYSTEM != "Linux":
+        return False
+    return ("gamescope" in os.environ.get("XDG_CURRENT_DESKTOP", "").lower()
+            or os.environ.get("SteamGamepadUI") == "1" or bool(os.environ.get("GAMESCOPE_WAYLAND_DISPLAY")))
+
+
+def launch_library(*args):
+    """Start the ROM Library (this program with --rom-library) in its own process; returns the
+    process, or None if it couldn't be started."""
     if getattr(sys, "frozen", False):
         cmd = [sys.executable, "--rom-library", *args]
     else:
         cmd = [sys.executable, str(Path(__file__).resolve()), "--rom-library", *args]
     try:
-        subprocess.Popen(cmd, close_fds=True)
-        return True
+        return subprocess.Popen(cmd, close_fds=True)
     except OSError:
-        return False
+        return None
 
 
 def open_folder(path):
@@ -1167,19 +1175,44 @@ class App(tk.Tk):
 
     def open_bios_vault(self):
         """The BIOS Vault now lives in the ROM Library: open it there (same settings)."""
-        if not launch_library("--bios"):
+        proc = launch_library("--bios")
+        if not proc:
             from ui_biosvault import BiosVaultDialog          # couldn't start it: open it here
             BiosVaultDialog(self)
         else:
             self.set_status("Opening the BIOS Vault in the ROM Library…")
+            self._hand_over(proc)
+
+    def _hand_over(self, proc):
+        """Game Mode shows only one of this app's windows and won't switch to the Library's, so the
+        Library stayed hidden behind this window. Step aside while it's open and come back after."""
+        if not in_game_mode():
+            return
+        self.withdraw()
+        started = __import__("time").monotonic()
+
+        def check():
+            if proc.poll() is None:
+                self.after(500, check)
+                return
+            self.deiconify()
+            self.lift()
+            self.focus_force()
+            if __import__("time").monotonic() - started < 3:
+                self.set_status("The ROM Library closed straight away: see ~/.emu_rom_library/logs/library.log")
+            else:
+                self.set_status("Ready.")
+        self.after(500, check)
 
     def open_cloud(self):
         from ui_cloud import CloudSyncDialog
         return CloudSyncDialog(self)
 
     def open_library(self):
-        if launch_library():
+        proc = launch_library()
+        if proc:
             self.set_status("Opening the ROM Library…")
+            self._hand_over(proc)
 
     def open_history(self):
         from ui_history import SaveHistoryDialog
