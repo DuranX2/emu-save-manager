@@ -22,7 +22,8 @@ APP_NAME = "ROM Library"
 SYSTEM = platform.system()
 ALL = "__all__"
 FILTERS = ("All games", "On this machine", "Not on this machine", "Checked out elsewhere", "Favourites",
-           "Only on this machine")
+           "Only on this machine", "Missing cover", "Missing information")
+ART_FILTERS = ("Missing cover", "Missing information")     # change as artwork is found or added
 COLORS = dict(apptheme.STATUS)        # readable on the ROM Library's dark theme
 
 
@@ -675,6 +676,8 @@ class LibraryApp(tk.Tk):
             self.refresh_meta_views()
 
     def refresh_meta_views(self, keys=None):
+        if self.v_filter.get() in ART_FILTERS:
+            self._schedule_fill()                 # games that got their artwork leave the list
         if self.view == "covers":
             self.draw_soon()
         else:
@@ -866,6 +869,11 @@ class LibraryApp(tk.Tk):
             return lib.is_favourite(key)
         if flt == "Only on this machine":
             return st == "local_only"
+        if flt in ART_FILTERS:
+            rec = self.meta.get(key) if self.meta else {}
+            if flt == "Missing cover":
+                return not rec.get("media", {}).get("cover")
+            return not rec.get("desc")
         return True
 
     def fill_games(self):

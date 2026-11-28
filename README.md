@@ -394,6 +394,10 @@ its `--rom-library` launch option or its name).
   It records start-up, artwork look-ups (progress, uploads to the library, errors), and - if the
   window ever stops responding for 10 seconds - what every part of the app was doing at that
   moment. **Artwork… ▸ Open log** (or **Open log folder** in the controller's Y menu) opens it.
+- **Show: Missing cover / Missing information** lists the games without a cover picture (or
+  without a description), to fill in by hand; a game leaves the list once it gets one. EmuDeck's
+  own `desktop`, `cloud`, `emulators`, `remoteplay` and `generic-applications` folders in
+  `Emulation/roms` aren't shown as systems.
 - **Right-click menus.** A game's menu has the same actions as **A** on a controller (check out / in,
   favourite, details, artwork); a system's menu looks up its artwork, leaves it out of look-ups, and
   opens the Check-up and BIOS.

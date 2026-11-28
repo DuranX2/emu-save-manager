@@ -110,6 +110,9 @@ IGNORE_FILES = {"metadata.txt", "systeminfo.txt", "desktop.ini", "thumbs.db", ".
                 "readme.txt"}
 IGNORE_DIRS = {"media", "images", "videos", "manuals", "snap", "snaps", "downloaded_media", "covers",
                "boxart", "$recycle.bin", "system volume information"}
+# EmuDeck's own folders in Emulation/roms: shortcut scripts for apps, cloud services and
+# emulators, not game systems (only skipped as system folders, not inside one)
+NOT_SYSTEMS = {"desktop", "cloud", "emulators", "remoteplay", "generic-applications"}
 # Files that list other files of the same game (the others are named after them)
 PRIMARY_EXT = {".m3u", ".cue", ".gdi", ".ccd", ".mds", ".toc"}
 # Things inside a folder that make the folder one game (PS3, Wii U, Xbox 360, PC-style games ...)
@@ -298,7 +301,7 @@ def build_items(entries):
     root = _tree(entries)
     out = {}
     for sysdir, node in root["dirs"].items():
-        if sysdir.startswith(".") or sysdir.lower() in IGNORE_DIRS:
+        if sysdir.startswith(".") or sysdir.lower() in IGNORE_DIRS or sysdir.lower() in NOT_SYSTEMS:
             continue
         items = _items_in(sysdir, node)
         if items or canonical(sysdir) in SYSTEMS:
@@ -763,6 +766,8 @@ class Library:
                 for it in lst:
                     local[it.key] = it
             for sysdir, target in missing_links(Path(self.local_roms)).items():
+                if sysdir.lower() in NOT_SYSTEMS:
+                    continue
                 offline[canonical(sysdir)] = (sysdir, target)
                 sysdirs.setdefault(canonical(sysdir), sysdir)
         with self.lock:
